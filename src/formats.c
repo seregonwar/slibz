@@ -658,10 +658,10 @@ int snap_write(const slz_archive *a, os_fd fd, uint64_t at) {
         v[i].kind = (uint32_t)e->method | (uint32_t)e->type << 16 | (uint32_t)e->enc << 24;
         if (v[i].name + e->nlen + 1 > blob) blob = v[i].name + e->nlen + 1;
     }
-    if (a->fmt == SLZ_7Z) blob = 0; /* 7z: re-parsed on resume (its headers are never punched) */
+    if (a->fmt == SLZ_7Z || a->fmt == SLZ_SLZ) blob = 0; /* re-parsed on resume: index never punched */
     h.magic = SNAP_MAGIC;
     h.fmt = (uint64_t)a->fmt;
-    h.n = a->fmt == SLZ_7Z ? 0 : a->n;
+    h.n = a->fmt == SLZ_7Z || a->fmt == SLZ_SLZ ? 0 : a->n;
     h.nlen = blob;
     h.size = a->size;
     h.cd_off = a->cd_off;
@@ -681,11 +681,11 @@ static int snap_read(slz_archive *a, os_fd fd, uint64_t at) {
     int64_t fs = os_size(fd);
     int r = SLZ_E_STATE;
     if (os_pread(fd, &h, sizeof h, at) != (int64_t)sizeof h || h.magic != SNAP_MAGIC || h.size != a->size ||
-        (h.fmt != SLZ_ZIP && h.fmt != SLZ_TAR && h.fmt != SLZ_GZ && h.fmt != SLZ_7Z) || fs < 0 ||
+        (h.fmt != SLZ_ZIP && h.fmt != SLZ_TAR && h.fmt != SLZ_GZ && h.fmt != SLZ_7Z && h.fmt != SLZ_SLZ) || fs < 0 ||
         (uint64_t)fs >= SIZE_MAX / 2 || h.n > (uint64_t)fs / sizeof *v || h.nlen > (uint64_t)fs ||
         at + sizeof h + h.n * sizeof *v + h.nlen > (uint64_t)fs)
         return SLZ_E_STATE;
-    if (h.fmt == SLZ_7Z) { /* identity only: the caller parses the archive itself */
+    if (h.fmt == SLZ_7Z || h.fmt == SLZ_SLZ) { /* identity only: the caller parses the archive itself */
         a->fp = h.fp;
         return 1;
     }
@@ -792,7 +792,10 @@ slz_archive *slz_open(const char *path, int *err) {
             r = (int)hn;
             goto fail;
         }
-        if (hn >= 6 && !memcmp(head, "7z\xbc\xaf\x27\x1c", 6)) {
+        if (hn >= 4 && !memcmp(head, "SLZ\x1a", 4)) {
+            a->fmt = SLZ_SLZ;
+            r = open_slz(a, head, (size_t)hn);
+        } else if (hn >= 6 && !memcmp(head, "7z\xbc\xaf\x27\x1c", 6)) {
             a->fmt = SLZ_7Z;
             r = open_7z(a, head, (size_t)hn);
         } else if (hn >= 2 && head[0] == 0x1f && head[1] == 0x8b)
@@ -829,6 +832,7 @@ void slz_close(slz_archive *a) {
     free(a->names);
     free(a->sorted);
     z7_free(a->z7);
+    nat_free(a->nat);
     free(a->path);
     free(a);
 }

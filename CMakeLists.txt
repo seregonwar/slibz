@@ -1,5 +1,5 @@
 # slz - Copyright (c) 2026 Seregon. SPDX-License-Identifier: MIT
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.18)
 project(slz VERSION 0.1.0 LANGUAGES C)
 
 option(SLZ_ASM "Use assembly CRC32 fast paths (GCC/Clang toolchains)" ON)
@@ -11,6 +11,7 @@ endif()
 option(SLZ_TESTS "Build tests" ${SLZ_TOP})
 option(SLZ_FAULT_INJECTION "Test builds: SLZ_FAULT_AT=N fails the N-th I/O operation" OFF)
 option(SLZ_INSTALL "Generate install rules" ON)
+option(SLZ_ZSTD "zstd codec for the .slz format (system zstd, else fetched v1.5.7)" ON)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -18,7 +19,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-set(SLZ_SRC src/inflate.c src/lzma.c src/sevenz.c src/crc32.c src/formats.c src/os.c src/extract.c)
+set(SLZ_SRC src/inflate.c src/lzma.c src/lz4.c src/native.c src/sevenz.c src/crc32.c src/formats.c src/os.c src/extract.c)
 
 # Assembly needs a GNU-style assembler (not cl.exe / ml64); MSVC falls back to portable C.
 set(SLZ_ASM_SRC "")
@@ -48,6 +49,35 @@ endif()
 if(NOT WIN32 AND NOT CMAKE_SYSTEM_NAME STREQUAL "WASI")
   find_package(Threads REQUIRED)
   target_link_libraries(slz PUBLIC Threads::Threads)
+endif()
+# zstd: an installed package if there is one, otherwise the official 1.5.7 release (SHA-256 pinned)
+set(SLZ_ZSTD_FETCHED OFF)
+if(SLZ_ZSTD)
+  find_package(zstd CONFIG QUIET)
+  if(TARGET zstd::libzstd_static)
+    set(SLZ_ZSTD_LIB zstd::libzstd_static)
+  elseif(TARGET zstd::libzstd_shared)
+    set(SLZ_ZSTD_LIB zstd::libzstd_shared)
+  else()
+    include(FetchContent)
+    FetchContent_Declare(zstd
+      URL https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
+      URL_HASH SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
+      SOURCE_SUBDIR build/cmake
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+    set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+    set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
+    set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(zstd)
+    set(SLZ_ZSTD_LIB libzstd_static)
+    set(SLZ_ZSTD_FETCHED ON)
+    target_include_directories(slz PRIVATE ${zstd_SOURCE_DIR}/lib)
+  endif()
+  target_compile_definitions(slz PRIVATE SLZ_ZSTD)
+  target_link_libraries(slz PRIVATE ${SLZ_ZSTD_LIB})
 endif()
 if(SLZ_FAULT_INJECTION)
   target_compile_definitions(slz PRIVATE SLZ_FAULT_INJECTION)
@@ -88,9 +118,13 @@ if(SLZ_INSTALL)
           RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
           PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
   install(TARGETS slz-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  if(SLZ_ZSTD_FETCHED) # the static slz needs the fetched zstd archive next to it
+    install(TARGETS libzstd_static EXPORT slzTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+  endif()
   install(EXPORT slzTargets NAMESPACE slz:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/slz)
   file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/slzConfig.cmake
        "include(CMakeFindDependencyMacro)\nif(NOT WIN32)\n  find_dependency(Threads)\nendif()\n"
+       "if(${SLZ_ZSTD} AND NOT ${SLZ_ZSTD_FETCHED})\n  find_dependency(zstd CONFIG)\nendif()\n"
        "include(\"\${CMAKE_CURRENT_LIST_DIR}/slzTargets.cmake\")\n")
   write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/slzConfigVersion.cmake COMPATIBILITY SameMajorVersion)
   install(FILES ${CMAKE_CURRENT_BINARY_DIR}/slzConfig.cmake ${CMAKE_CURRENT_BINARY_DIR}/slzConfigVersion.cmake

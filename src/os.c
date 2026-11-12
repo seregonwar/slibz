@@ -301,8 +301,9 @@ int os_create(os_dst *d, const char *rel, int mode, unsigned perm, os_fd *fd) {
     }
     if (!ret && mode != OC_MKDIR) {
         if (mode == OC_OVERWRITE) DeleteFileW(w);
-        h = CreateFileW(w, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, NULL,
-                        mode == OC_RESUME ? OPEN_ALWAYS : CREATE_NEW,
+        h = CreateFileW(w, GENERIC_READ | GENERIC_WRITE,
+                        FILE_SHARE_READ | (mode == OC_RESUME ? FILE_SHARE_WRITE : 0), /* parallel block writers */
+                        NULL, mode == OC_RESUME ? OPEN_ALWAYS : CREATE_NEW,
                         FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
         if (h == INVALID_HANDLE_VALUE)
             ret = werr();
@@ -371,6 +372,102 @@ int os_open_journal(const char *path, os_fd *fd) {
     *fd = (os_fd)h;
     return 0;
 }
+static char *utf8(const wchar_t *w) {
+    int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL);
+    char *s = n > 0 ? (char *)malloc((size_t)n) : NULL;
+    if (s && WideCharToMultiByte(CP_UTF8, 0, w, -1, s, n, NULL, NULL) != n) {
+        free(s);
+        s = NULL;
+    }
+    return s;
+}
+static int64_t ft_unix(FILETIME ft) {
+    return (int64_t)(((uint64_t)ft.dwHighDateTime << 32 | ft.dwLowDateTime) / 10000000u) - 11644473600LL;
+}
+/* depth-first walk; `w` is a growing buffer holding the current absolute path */
+static int walk_dir(wchar_t **w, size_t *cap, size_t wn, char *rel, size_t rn, os_walk_cb cb, void *u) {
+    WIN32_FIND_DATAW f;
+    HANDLE h;
+    int r = 0;
+    if (wn + 3 > *cap) return SLZ_E_LIMIT;
+    wcscpy(*w + wn, L"\\*");
+    if ((h = FindFirstFileW(*w, &f)) == INVALID_HANDLE_VALUE) return 0; /* empty or unreadable */
+    do {
+        size_t ln = wcslen(f.cFileName), k;
+        char *name;
+        int dir = !!(f.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
+        if (!wcscmp(f.cFileName, L".") || !wcscmp(f.cFileName, L"..")) continue;
+        if (f.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue; /* links, junctions: never followed */
+        if (wn + 1 + ln + 3 > *cap || !(name = utf8(f.cFileName))) {
+            r = SLZ_E_LIMIT;
+            break;
+        }
+        k = strlen(name);
+        if (rn + 1 + k >= 4096) {
+            free(name);
+            r = SLZ_E_LIMIT;
+            break;
+        }
+        (*w)[wn] = L'\\';
+        memcpy(*w + wn + 1, f.cFileName, (ln + 1) * sizeof(wchar_t));
+        rel[rn] = '/';
+        memcpy(rel + rn + 1, name, k + 1);
+        free(name);
+        {
+            char *abs = utf8(*w);
+            r = abs ? cb(u, abs, rel, dir, dir ? 0 : ((uint64_t)f.nFileSizeHigh << 32 | f.nFileSizeLow),
+                         ft_unix(f.ftLastWriteTime), dir ? 0755u : 0644u)
+                    : SLZ_E_NOMEM;
+            free(abs);
+        }
+        if (!r && dir) r = walk_dir(w, cap, wn + 1 + ln, rel, rn + 1 + k, cb, u);
+        rel[rn] = 0;
+    } while (!r && FindNextFileW(h, &f));
+    FindClose(h);
+    (*w)[wn] = 0;
+    return r;
+}
+int os_walk(const char *root, os_walk_cb cb, void *u) {
+    wchar_t *full = wpath(root), *w, *base;
+    WIN32_FILE_ATTRIBUTE_DATA a;
+    char rel[4096], *b8;
+    size_t cap = 32768, wn;
+    int r;
+    if (!full) return SLZ_E_OPEN;
+    if (!GetFileAttributesExW(full, GetFileExInfoStandard, &a) || (a.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        free(full);
+        return SLZ_E_OPEN;
+    }
+    wn = wcslen(full);
+    while (wn > 7 && full[wn - 1] == L'\\') /* trailing separators */
+        full[--wn] = 0;
+    base = wcsrchr(full, L'\\');
+    base = base ? base + 1 : full;
+    if (!(b8 = utf8(base)) || strlen(b8) >= sizeof rel || !(w = (wchar_t *)malloc(cap * sizeof *w)) || wn >= cap) {
+        free(b8);
+        free(full);
+        return SLZ_E_NOMEM;
+    }
+    strcpy(rel, b8);
+    free(b8);
+    memcpy(w, full, (wn + 1) * sizeof *w);
+    {
+        int dir = !!(a.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
+        r = cb(u, root, rel, dir, dir ? 0 : ((uint64_t)a.nFileSizeHigh << 32 | a.nFileSizeLow), ft_unix(a.ftLastWriteTime),
+               dir ? 0755u : 0644u);
+        if (!r && dir) r = walk_dir(&w, &cap, wn, rel, strlen(rel), cb, u);
+    }
+    free(w);
+    free(full);
+    return r;
+}
+int os_rename(const char *from, const char *to) {
+    wchar_t *a = wpath(from), *b = wpath(to);
+    int r = a && b && MoveFileExW(a, b, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) ? 0 : SLZ_E_IO;
+    free(a);
+    free(b);
+    return r;
+}
 int os_sync_parent(const char *path) {
     wchar_t *w = wpath(path), *sl;
     HANDLE h;
@@ -398,6 +495,8 @@ int os_sync_parent(const char *path) {
 #if !defined(__wasi__)
 #include <sys/file.h> /* flock */
 #endif
+#include <dirent.h>
+#include <stdio.h> /* rename */
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
 #endif
@@ -560,6 +659,58 @@ int os_open_journal(const char *path, os_fd *fd) {
     }
     *fd = f;
     return 0;
+}
+/* depth-first walk with fstatat(AT_SYMLINK_NOFOLLOW): links and special files are skipped */
+static int walk_dir(char *path, size_t pn, char *rel, size_t rn, os_walk_cb cb, void *u) {
+    DIR *d = opendir(path);
+    struct dirent *e;
+    int r = 0;
+    if (!d) return 0;
+    while (!r && (e = readdir(d))) {
+        struct stat st;
+        size_t k = strlen(e->d_name);
+        int dir;
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        if (pn + 1 + k >= 4096 || rn + 1 + k >= 4096) {
+            r = SLZ_E_LIMIT;
+            break;
+        }
+        path[pn] = '/';
+        memcpy(path + pn + 1, e->d_name, k + 1);
+        rel[rn] = '/';
+        memcpy(rel + rn + 1, e->d_name, k + 1);
+        if (lstat(path, &st) || !(S_ISREG(st.st_mode) || S_ISDIR(st.st_mode))) continue;
+        dir = S_ISDIR(st.st_mode);
+        r = cb(u, path, rel, dir, dir ? 0 : (uint64_t)st.st_size, (int64_t)st.st_mtime, (unsigned)st.st_mode & 07777);
+        if (!r && dir) r = walk_dir(path, pn + 1 + k, rel, rn + 1 + k, cb, u);
+    }
+    closedir(d);
+    path[pn] = 0;
+    rel[rn] = 0;
+    return r;
+}
+int os_walk(const char *root, os_walk_cb cb, void *u) {
+    char path[4096], rel[4096];
+    const char *base;
+    size_t n = strlen(root);
+    struct stat st;
+    int r;
+    if (n >= sizeof path) return SLZ_E_LIMIT;
+    memcpy(path, root, n + 1);
+    while (n > 1 && path[n - 1] == '/') /* trailing separators */
+        path[--n] = 0;
+    if (lstat(path, &st) || !(S_ISREG(st.st_mode) || S_ISDIR(st.st_mode))) return SLZ_E_OPEN;
+    base = strrchr(path, '/');
+    base = base && base[1] ? base + 1 : path;
+    if (!strcmp(base, ".") || !strcmp(base, "/")) base = "root";
+    strcpy(rel, base);
+    r = cb(u, path, rel, S_ISDIR(st.st_mode), S_ISDIR(st.st_mode) ? 0 : (uint64_t)st.st_size, (int64_t)st.st_mtime,
+           (unsigned)st.st_mode & 07777);
+    if (!r && S_ISDIR(st.st_mode)) r = walk_dir(path, n, rel, strlen(rel), cb, u);
+    return r;
+}
+int os_rename(const char *from, const char *to) {
+    return rename(from, to) ? perr() : 0;
 }
 int os_sync_parent(const char *path) {
     char buf[4096];

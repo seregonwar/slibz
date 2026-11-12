@@ -26,9 +26,9 @@ enum {
     SLZ_E_STATE = -12,
     SLZ_E_OPEN = -13
 };
-enum { SLZ_ZIP = 1, SLZ_TAR, SLZ_GZ, SLZ_TGZ, SLZ_7Z };
+enum { SLZ_ZIP = 1, SLZ_TAR, SLZ_GZ, SLZ_TGZ, SLZ_7Z, SLZ_SLZ /* native format, docs/slz-format.md */ };
 /* compression methods (zip numbering where it exists) */
-enum { SLZ_M_STORE = 0, SLZ_M_DEFLATE = 8, SLZ_M_LZMA = 14, SLZ_M_LZMA2 = 33 };
+enum { SLZ_M_STORE = 0, SLZ_M_DEFLATE = 8, SLZ_M_LZMA = 14, SLZ_M_LZMA2 = 33, SLZ_M_ZSTD = 93, SLZ_M_LZ4 = 132 };
 enum { SLZ_FILE = 0, SLZ_DIR, SLZ_LINK, SLZ_OTHER };
 
 typedef struct {
@@ -75,6 +75,24 @@ typedef int (*slz_dir_cb)(void *user, const char *name, size_t len, int is_dir, 
 int slz_dir(slz_archive *a, const char *dir, slz_dir_cb cb, void *user);
 
 int slz_extract(slz_archive *a, const char *dest, slz_opts *opts);
+
+/* ---- creating .slz archives ---- */
+enum { SLZ_CODEC_DEFAULT = 0, SLZ_CODEC_STORE, SLZ_CODEC_LZ4, SLZ_CODEC_ZSTD };
+enum { SLZ_NO_DEDUP = 1 };
+typedef struct {
+    int codec;            /* SLZ_CODEC_*: default = zstd when built in (slz_has_zstd), else LZ4 */
+    int level;            /* zstd level 1..22, 0 = 3 */
+    unsigned threads;     /* 0 = CPU count */
+    uint32_t block_size;  /* bytes per block, 0 = 8 MiB; 64 KiB .. 256 MiB */
+    unsigned flags;       /* SLZ_NO_DEDUP */
+    slz_progress progress; void *user; /* progress over input bytes; non-zero cancels */
+    uint64_t files, in_bytes, out_bytes; /* out */
+} slz_create_opts;
+
+/* Pack files and directories (recursively; links are skipped) into a new .slz archive. The
+ * archive is written to "<path>.part" and renamed into place only when complete. */
+int slz_create(const char *path, const char *const *inputs, size_t ninputs, slz_create_opts *opts);
+int slz_has_zstd(void);
 uint32_t slz_crc32(uint32_t crc, const void *p, size_t n);
 const char *slz_strerror(int err);
 
