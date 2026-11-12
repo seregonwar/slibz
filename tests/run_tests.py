@@ -167,12 +167,15 @@ def overlap_variants():
 
 
 def finished_or_resumable(arc, rc, stderr):
-    """after a run: True when the extraction is complete. A run killed between deleting the archive
-    and deleting its journal leaves only the (harmless) journal behind."""
+    """after a run: True when the extraction is complete. The archive is deleted only once
+    everything is extracted, so a missing archive means done: a run killed after its last step makes
+    the next attempt report "cannot open", and one killed between deleting the archive and deleting
+    the journal leaves only the (harmless) journal. The caller still compares the output byte for byte."""
     if rc == 0:
         return True
-    if not os.path.exists(arc) and os.path.exists(arc + ".slzstate"):
-        os.remove(arc + ".slzstate")
+    if not os.path.exists(arc):
+        if os.path.exists(arc + ".slzstate"):
+            os.remove(arc + ".slzstate")
         return True
     return False
 

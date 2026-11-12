@@ -37,15 +37,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: windows-msvc, gen: "Visual Studio 17 2022", extra: "" }
-          - { name: windows-clang-cl, gen: "Visual Studio 17 2022", extra: "-T ClangCL" }
+          # no fixed -G: CMake picks the newest Visual Studio installed on the runner
+          - { name: windows-msvc, extra: "" }
+          - { name: windows-clang-cl, extra: "-T ClangCL" }
     name: ${{ matrix.name }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - name: build (fault injection)
         run: |
-          cmake -S . -B build -G "${{ matrix.gen }}" -A x64 ${{ matrix.extra }} -DSLZ_FAULT_INJECTION=ON
+          cmake -S . -B build -A x64 ${{ matrix.extra }} -DSLZ_FAULT_INJECTION=ON
           cmake --build build --config Release
       - name: tests
         run: ctest --test-dir build -C Release --output-on-failure
