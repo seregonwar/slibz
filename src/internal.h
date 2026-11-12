@@ -7,45 +7,49 @@
 #include <string.h>
 
 /* Internal symbols are namespaced so that static linking never clashes with user code. */
-#define os_open      slz_i_os_open
-#define os_size      slz_i_os_size
-#define os_pread     slz_i_os_pread
-#define os_pwrite    slz_i_os_pwrite
-#define os_sync      slz_i_os_sync
-#define os_trunc     slz_i_os_trunc
-#define os_punch     slz_i_os_punch
-#define os_mtime     slz_i_os_mtime
-#define os_close     slz_i_os_close
-#define os_unlink    slz_i_os_unlink
-#define os_exists    slz_i_os_exists
-#define os_allocated slz_i_os_allocated
-#define os_dst_open  slz_i_os_dst_open
-#define os_dst_close slz_i_os_dst_close
-#define os_create    slz_i_os_create
-#define os_ncpu      slz_i_os_ncpu
-#define os_run       slz_i_os_run
-#define os_add       slz_i_os_add
-#define os_fileid    slz_i_os_fileid
-#define inf_new      slz_i_inf_new
-#define inf_reset    slz_i_inf_reset
-#define inf_run      slz_i_inf_run
-#define inf_flush    slz_i_inf_flush
-#define tar_step     slz_i_tar_step
-#define tar_free     slz_i_tar_free
-#define sanitize     slz_i_sanitize
-#define snap_write   slz_i_snap_write
-#define rng_read     slz_i_rng_read
-#define lzd_new      slz_i_lzd_new
-#define lzd_free     slz_i_lzd_free
-#define lzd_io       slz_i_lzd_io
-#define lzd_lzma     slz_i_lzd_lzma
-#define lzd_lzma2    slz_i_lzd_lzma2
-#define bcj_wr       slz_i_bcj_wr
-#define bcj_finish   slz_i_bcj_finish
-#define open_7z      slz_i_open_7z
-#define z7_decode    slz_i_z7_decode
-#define z7_supported slz_i_z7_supported
-#define z7_free      slz_i_z7_free
+#define os_open         slz_i_os_open
+#define os_size         slz_i_os_size
+#define os_pread        slz_i_os_pread
+#define os_pwrite       slz_i_os_pwrite
+#define os_sync         slz_i_os_sync
+#define os_trunc        slz_i_os_trunc
+#define os_punch        slz_i_os_punch
+#define os_mtime        slz_i_os_mtime
+#define os_close        slz_i_os_close
+#define os_unlink       slz_i_os_unlink
+#define os_exists       slz_i_os_exists
+#define os_allocated    slz_i_os_allocated
+#define os_dst_open     slz_i_os_dst_open
+#define os_dst_close    slz_i_os_dst_close
+#define os_create       slz_i_os_create
+#define os_ncpu         slz_i_os_ncpu
+#define os_run          slz_i_os_run
+#define os_add          slz_i_os_add
+#define os_fileid       slz_i_os_fileid
+#define os_cas          slz_i_os_cas
+#define os_open_journal slz_i_os_open_journal
+#define os_sync_parent  slz_i_os_sync_parent
+#define os_dst_sync     slz_i_os_dst_sync
+#define inf_new         slz_i_inf_new
+#define inf_reset       slz_i_inf_reset
+#define inf_run         slz_i_inf_run
+#define inf_flush       slz_i_inf_flush
+#define tar_step        slz_i_tar_step
+#define tar_free        slz_i_tar_free
+#define sanitize        slz_i_sanitize
+#define snap_write      slz_i_snap_write
+#define rng_read        slz_i_rng_read
+#define lzd_new         slz_i_lzd_new
+#define lzd_free        slz_i_lzd_free
+#define lzd_io          slz_i_lzd_io
+#define lzd_lzma        slz_i_lzd_lzma
+#define lzd_lzma2       slz_i_lzd_lzma2
+#define bcj_wr          slz_i_bcj_wr
+#define bcj_finish      slz_i_bcj_finish
+#define open_7z         slz_i_open_7z
+#define z7_decode       slz_i_z7_decode
+#define z7_supported    slz_i_z7_supported
+#define z7_free         slz_i_z7_free
 
 /* MIN evaluates its arguments twice: never pass expressions with side effects. */
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -74,14 +78,26 @@ enum {
     OC_MKDIR      /* create the directory path only */
 };
 
-/* Extraction destination. Each worker thread owns one: the last directory handle is cached so
- * that sibling files cost a single openat (POSIX). */
+/* Extraction destination. Each worker thread owns one.
+ * - The handle of the last directory is cached so that sibling files cost a single open.
+ * - Windows: the whole chain of directory handles below the root is held open without
+ *   FILE_SHARE_DELETE, so none of them can be renamed or replaced (e.g. by a junction) between
+ *   the check and the use.
+ * - With `track` set (destructive mode), every directory that receives a new entry is recorded
+ *   (a duplicated handle) so os_dst_sync can make the new names durable. */
+#define DST_DIRTY 64
 typedef struct {
-    os_fd root;      /* POSIX: fd of the destination directory */
+    os_fd root;      /* fd / handle of the destination directory */
     void *wroot;     /* Windows: absolute \\?\ path of the destination */
     char cdir[4096]; /* cached relative directory ... */
     size_t cdn;      /* ... its length ... */
-    os_fd cfd;       /* ... and its fd (POSIX) */
+    os_fd cfd;       /* ... and its handle */
+    os_fd *chain;    /* Windows: held handles of every component of cdir */
+    size_t nchain;
+    int track;
+    os_fd dirty[DST_DIRTY]; /* directories with new entries since the last os_dst_sync */
+    os_fd dirty_src;        /* handle the last dirty entry was duplicated from */
+    int ndirty;
 } os_dst;
 
 int os_open(const char *path, int rw, int create, os_fd *fd);
@@ -99,11 +115,17 @@ uint64_t os_allocated(const char *path); /* bytes allocated on disk (sparse awar
 uint64_t os_fileid(os_fd fd);            /* identity of the open file (volume + inode / file index) */
 int os_dst_open(os_dst *d, const char *path);
 void os_dst_close(os_dst *d);
+int os_dst_sync(os_dst *d); /* make every directory entry created since the last call durable */
+/* destructive-mode journal: never follows a link, regular file only, exclusive lock (a second
+ * process extracting the same archive gets SLZ_E_STATE) */
+int os_open_journal(const char *path, os_fd *fd);
+int os_sync_parent(const char *path); /* make the directory entry of `path` durable */
 /* create `rel` (sanitized, '/'-separated) below the destination without ever following a link */
 int os_create(os_dst *d, const char *rel, int mode, unsigned perm, os_fd *fd);
 unsigned os_ncpu(void);
 int os_run(unsigned n, void (*fn)(void *), void *arg); /* run fn(arg) on n threads (incl. caller), join */
 int64_t os_add(volatile int64_t *p, int64_t v);        /* atomic add, returns the new value */
+int os_cas(volatile int64_t *p, int64_t expect, int64_t v); /* atomic compare-and-swap, 1 on success */
 
 /* ===================== inflate.c: DEFLATE decoder ===================== */
 

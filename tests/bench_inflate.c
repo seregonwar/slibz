@@ -41,6 +41,7 @@ int main(int argc, char **argv) {
     struct libdeflate_decompressor *ld = libdeflate_alloc_decompressor();
     double tot[3] = {0, 0, 0};
     size_t totn = 0;
+    printf("zlib %s, libdeflate %s\n", zlibVersion(), LIBDEFLATE_VERSION_STRING);
     printf("%-14s %10s %10s %10s %10s   (MB/s of output, best of 5)\n", "file", "size", "slz", "zlib",
            "libdeflate");
     for (a = 1; a < argc; a++) {

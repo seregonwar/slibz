@@ -106,6 +106,7 @@ static uint64_t tree_alloc(const char *dir) {
 }
 #else
 #include <dirent.h>
+#include <unistd.h>
 #include <sys/stat.h>
 static uint64_t tree_alloc(const char *dir) {
     DIR *d = opendir(dir);
@@ -173,10 +174,33 @@ static int resume(const char *archive, const char *dest, uint64_t step, uint64_t
     return os_exists(archive) ? 1 : 0;
 }
 
+/* the destructive journal: exclusive (a second extraction of the same archive is refused) and
+ * never opened through a symlink */
+static void test_journal(void) {
+#ifdef _WIN32
+    const char *p = "slz-test-journal.slzstate";
+#else
+    const char *p = "/tmp/slz-test-journal.slzstate"; /* a POSIX filesystem (locks, symlinks) */
+#endif
+    os_fd a = OS_BAD, b = OS_BAD;
+    os_unlink(p);
+    CHECK(os_open_journal(p, &a) == 0);
+    CHECK(os_open_journal(p, &b) == SLZ_E_STATE);
+    if (a != OS_BAD) os_close(a);
+    if (b != OS_BAD) os_close(b);
+    os_unlink(p);
+#ifndef _WIN32
+    CHECK(symlink("/etc/passwd", p) == 0);
+    CHECK(os_open_journal(p, &a) == SLZ_E_UNSAFE);
+    unlink(p);
+#endif
+}
+
 int main(int argc, char **argv) {
     if (argc >= 2 && !strcmp(argv[1], "unit")) {
         test_sanitize();
         test_tree();
+        test_journal();
         printf("%s\n", fails ? "unit: FAILED" : "unit: ok");
         return fails != 0;
     }

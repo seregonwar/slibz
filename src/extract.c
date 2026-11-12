@@ -25,7 +25,7 @@ typedef struct {
     uint64_t *lim;
     size_t n;
     volatile int64_t next, files, skipped, out, total;
-    volatile int err;
+    volatile int64_t err; /* first error, set once with os_cas, read atomically */
     int destr, resumed;
     int (*unit)(void *w, size_t k, const jrec *res); /* one work item: an entry, or a 7z folder */
     uint64_t punch_base;                             /* never punch below this (7z signature header) */
@@ -95,7 +95,9 @@ static int ckpt(wk *w, uint64_t bitpos, int done) {
     job *j = w->j;
     uint64_t prev = j->j.punched, p = (bitpos / 8) & ~(uint64_t)(PALIGN - 1);
     int r;
-    if ((r = sync_pend(j)) || (w->out != OS_BAD && (r = os_sync(w->out, 0)))) return r;
+    /* data and names of everything written so far must be durable before the journal moves on */
+    if ((r = sync_pend(j)) || (w->out != OS_BAD && (r = os_sync(w->out, 0))) || (r = os_dst_sync(&w->dst)))
+        return r;
     j->j.idx = w->k + (size_t)done;
     j->j.doff = w->doff;
     j->j.bitpos = done ? 0 : bitpos;
@@ -360,7 +362,7 @@ static void worker(void *p) {
     job *j = (job *)p;
     wk w;
     int r = wk_init(&w, j);
-    while (!r && !j->err) {
+    while (!r && !os_add(&j->err, 0)) {
         int64_t k = os_add(&j->next, 1) - 1;
         if (k >= (int64_t)j->n) break;
         if ((r = j->unit(&w, (size_t)k, NULL)) && w.out != OS_BAD) {
@@ -368,7 +370,7 @@ static void worker(void *p) {
             w.out = OS_BAD;
         }
     }
-    if (r && !j->err) j->err = r;
+    if (r) os_cas(&j->err, 0, r); /* keep the first error */
     wk_free(&w);
 }
 
@@ -467,7 +469,8 @@ static int destructive(job *j, wk *w) {
     if (!jp) return SLZ_E_NOMEM;
     memcpy(jp, j->a->path, L);
     memcpy(jp + L, ".slzstate", 10);
-    if ((r = os_open(j->a->path, 1, 0, &j->arw)) || (r = os_open(jp, 1, 1, &j->jf))) goto out;
+    w->dst.track = 1; /* record directories that get new entries (made durable at checkpoints) */
+    if ((r = os_open(j->a->path, 1, 0, &j->arw)) || (r = os_open_journal(jp, &j->jf))) goto out;
     got = os_pread(j->jf, s, sizeof s, 0);
     for (k = 0; got == (int64_t)sizeof s && k < 2; k++)
         if (s[k].magic == JMAGIC && s[k].sum == jsum(&s[k]) && s[k].fp == j->a->fp &&
@@ -491,6 +494,7 @@ static int destructive(job *j, wk *w) {
         j->j.fp = j->a->fp;
         j->j.punched = j->punch_base;
         if ((r = snap_write(j->a, j->jf, SNAP_AT)) || (r = jwrite(j))) goto out; /* jwrite syncs both */
+        if ((r = os_sync_parent(jp))) goto out; /* the journal's own name must survive a crash */
     } else if (j->j.punched > j->punch_base &&
                (r = os_punch(j->arw, j->punch_base, j->j.punched - j->punch_base))) {
         goto out; /* re-punch: the crash may have happened between journal write and punch */
@@ -563,6 +567,10 @@ int slz_extract(slz_archive *a, const char *dest, slz_opts *opts) {
         j.ord[i] = &a->e[i];
         j.total += (int64_t)a->e[i].usize;
     }
+    /* Overlap guard (zip, tar, gzip): in offset order, entry i owns [off_i, off_{i+1}) and nothing
+     * more - the last one ends at the central directory / gzip trailer / end of file. one()
+     * refuses any local header or compressed data that crosses its limit, so no two entries can
+     * share bytes (overlap bombs) and destructive mode never punches data still needed. */
     qsort(j.ord, a->n, sizeof *j.ord, by_off);
     for (i = 0; i < a->n; i++)
         j.lim[i] = i + 1 < a->n        ? j.ord[i + 1]->off
@@ -582,7 +590,7 @@ int slz_extract(slz_archive *a, const char *dest, slz_opts *opts) {
         }
         if (!r) {
             os_run(MIN(t, (unsigned)MIN(j.n ? j.n : 1, 64)), worker, &j);
-            r = j.err;
+            r = (int)j.err;
         }
     }
     opts->files = (uint64_t)j.files;

@@ -1,10 +1,16 @@
 # slz - Copyright (c) 2026 Seregon. SPDX-License-Identifier: MIT
 cmake_minimum_required(VERSION 3.13)
-project(slz C)
+project(slz VERSION 0.1.0 LANGUAGES C)
 
 option(SLZ_ASM "Use assembly CRC32 fast paths (GCC/Clang toolchains)" ON)
 option(SLZ_SANITIZE "Build with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
-option(SLZ_TESTS "Build tests" ON)
+set(SLZ_TOP OFF)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  set(SLZ_TOP ON) # tests by default only when slz is the top-level project
+endif()
+option(SLZ_TESTS "Build tests" ${SLZ_TOP})
+option(SLZ_FAULT_INJECTION "Test builds: SLZ_FAULT_AT=N fails the N-th I/O operation" OFF)
+option(SLZ_INSTALL "Generate install rules" ON)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -28,7 +34,9 @@ if(SLZ_ASM AND NOT MSVC AND NOT CMAKE_SYSTEM_NAME STREQUAL "WASI" AND NOT EMSCRI
 endif()
 
 add_library(slz ${SLZ_SRC} ${SLZ_ASM_SRC})
-target_include_directories(slz PUBLIC include)
+add_library(slz::slz ALIAS slz)
+target_include_directories(slz PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
+set_target_properties(slz PROPERTIES VERSION ${PROJECT_VERSION} SOVERSION ${PROJECT_VERSION_MAJOR} PUBLIC_HEADER include/slz.h)
 if(SLZ_ASM_SRC)
   target_compile_definitions(slz PRIVATE SLZ_ASM)
 endif()
@@ -40,6 +48,9 @@ endif()
 if(NOT WIN32 AND NOT CMAKE_SYSTEM_NAME STREQUAL "WASI")
   find_package(Threads REQUIRED)
   target_link_libraries(slz PUBLIC Threads::Threads)
+endif()
+if(SLZ_FAULT_INJECTION)
+  target_compile_definitions(slz PRIVATE SLZ_FAULT_INJECTION)
 endif()
 if(SLZ_SANITIZE)
   target_compile_options(slz PUBLIC -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g)
@@ -58,6 +69,30 @@ if(SLZ_TESTS)
   add_test(NAME unit COMMAND slz-test unit)
   find_package(Python3 COMPONENTS Interpreter)
   if(Python3_FOUND)
-    add_test(NAME archives COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_tests.py $<TARGET_FILE:slz-cli> $<TARGET_FILE:slz-test>)
+    set(SLZ_TEST_ARGS)
+    if(SLZ_FAULT_INJECTION)
+      set(SLZ_TEST_ARGS --fault-cli $<TARGET_FILE:slz-cli>) # the same CLI is fault-enabled
+    endif()
+    add_test(NAME archives COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_tests.py
+             $<TARGET_FILE:slz-cli> $<TARGET_FILE:slz-test> ${SLZ_TEST_ARGS})
   endif()
+endif()
+
+# find_package(slz) / target_link_libraries(app slz::slz) after `cmake --install`
+if(SLZ_INSTALL)
+  include(GNUInstallDirs)
+  include(CMakePackageConfigHelpers)
+  install(TARGETS slz EXPORT slzTargets
+          ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+          LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+          RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+          PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+  install(TARGETS slz-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  install(EXPORT slzTargets NAMESPACE slz:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/slz)
+  file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/slzConfig.cmake
+       "include(CMakeFindDependencyMacro)\nif(NOT WIN32)\n  find_dependency(Threads)\nendif()\n"
+       "include(\"\${CMAKE_CURRENT_LIST_DIR}/slzTargets.cmake\")\n")
+  write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/slzConfigVersion.cmake COMPATIBILITY SameMajorVersion)
+  install(FILES ${CMAKE_CURRENT_BINARY_DIR}/slzConfig.cmake ${CMAKE_CURRENT_BINARY_DIR}/slzConfigVersion.cmake
+          DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/slz)
 endif()

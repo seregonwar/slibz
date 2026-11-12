@@ -1,0 +1,88 @@
+# slz - Copyright (c) 2026 Seregon. SPDX-License-Identifier: MIT
+name: ci
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  posix:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, cc: gcc, name: linux-gcc-asan }
+          - { os: ubuntu-latest, cc: clang, name: linux-clang-asan }
+          - { os: ubuntu-24.04-arm, cc: gcc, name: linux-arm64-asan }
+          - { os: macos-latest, cc: clang, name: macos-arm64-asan }
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: tools
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -qq && sudo apt-get install -y -qq 7zip zlib1g-dev liblzma-dev; fi
+          if [ "$RUNNER_OS" = macOS ]; then brew install sevenzip xz; fi
+      - name: build (ASan + UBSan + fault injection)
+        run: |
+          cmake -S . -B build -DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                -DSLZ_SANITIZE=ON -DSLZ_FAULT_INJECTION=ON
+          cmake --build build -j4
+      - name: tests (round trips, hostile archives, fuzz, kills, injected I/O faults, resume)
+        run: ctest --test-dir build --output-on-failure
+      - name: release build + install
+        run: |
+          cmake -S . -B rel -DCMAKE_C_COMPILER=${{ matrix.cc }} -DSLZ_TESTS=OFF
+          cmake --build rel -j4 && cmake --install rel --prefix "$PWD/inst"
+
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-msvc, gen: "Visual Studio 17 2022", extra: "" }
+          - { name: windows-clang-cl, gen: "Visual Studio 17 2022", extra: "-T ClangCL" }
+    name: ${{ matrix.name }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build (fault injection)
+        run: |
+          cmake -S . -B build -G "${{ matrix.gen }}" -A x64 ${{ matrix.extra }} -DSLZ_FAULT_INJECTION=ON
+          cmake --build build --config Release
+      - name: tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+  freebsd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vmactions/freebsd-vm@v1
+        with:
+          release: "14.2"
+          prepare: pkg install -y cmake python3 7-zip
+          run: |
+            cmake -S . -B build -DSLZ_FAULT_INJECTION=ON
+            cmake --build build -j4
+            ctest --test-dir build --output-on-failure
+
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - name: wasi-sdk
+        run: |
+          url=$(curl -fsSL https://api.github.com/repos/WebAssembly/wasi-sdk/releases/latest | grep -o 'https://[^"]*x86_64-linux.tar.gz' | head -1)
+          mkdir -p wasi && curl -fsSL "$url" | tar -xz -C wasi --strip-components=1
+      - name: build and run under WASI
+        run: |
+          wasi/bin/clang --target=wasm32-wasip1 -O2 -Wall -Wextra -Iinclude -Isrc src/*.c tools/slz.c -o slz.wasm
+          mkdir -p w && cd w && printf 'hello wasm\n' > a.txt && mkdir d && cp a.txt d/b.txt && zip -q -r t.zip a.txt d && cd ..
+          cat > run.mjs <<'EOF'
+          import { readFile } from 'node:fs/promises'; import { WASI } from 'node:wasi';
+          const [,, wasm, dir, ...args] = process.argv;
+          const wasi = new WASI({ version: 'preview1', args: ['slz', ...args], preopens: { '/w': dir }, returnOnExit: true });
+          const inst = await WebAssembly.instantiate(await WebAssembly.compile(await readFile(wasm)), wasi.getImportObject());
+          process.exitCode = wasi.start(inst);
+          EOF
+          node --no-warnings run.mjs slz.wasm "$PWD/w" x /w/t.zip /w/out
+          cmp w/a.txt w/out/a.txt && cmp w/d/b.txt w/out/d/b.txt

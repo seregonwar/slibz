@@ -10,6 +10,9 @@ extraction interrupted and resumed many times."""
 import gzip, hashlib, io, os, random, shutil, struct, subprocess, sys, tarfile, tempfile, zipfile
 
 CLI, TESTER = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
+# optional: a CLI built with -DSLZ_FAULT_INJECTION (SLZ_FAULT_AT=N fails the N-th I/O operation)
+FAULT_CLI = os.path.abspath(sys.argv[sys.argv.index("--fault-cli") + 1]) if "--fault-cli" in sys.argv else None
+KILLS = int(sys.argv[sys.argv.index("--kills") + 1]) if "--kills" in sys.argv else 40
 FUZZ = int(sys.argv[sys.argv.index("--fuzz") + 1]) if "--fuzz" in sys.argv else 300
 WIN = os.name == "nt"
 failures = []
@@ -141,6 +144,99 @@ def overlapping_zip():
     return bytes(raw)
 
 
+def overlap_variants():
+    """data-level overlaps that must all be refused before any decoding"""
+    base = zip_with([("a.txt", b"A" * 1000), ("b.txt", b"B" * 1000), ("c.txt", b"C" * 1000)])
+    cds = [i for i in range(len(base)) if base.startswith(b"PK\x01\x02", i)]
+    lho = [struct.unpack_from("<I", base, c + 42)[0] for c in cds]
+    out = {}
+    raw = bytearray(base)  # entry 1's compressed size runs into entry 2's local header
+    struct.pack_into("<I", raw, cds[0] + 20, lho[1] - lho[0])
+    out["overlap_partial.zip"] = bytes(raw)
+    raw = bytearray(base)  # entry 2's local header placed inside entry 1's data (quoted-overlap bomb)
+    struct.pack_into("<I", raw, cds[1] + 42, lho[0] + 40)
+    out["overlap_nested.zip"] = bytes(raw)
+    raw = bytearray(base)  # entry 3 claims to start inside the central directory
+    struct.pack_into("<I", raw, cds[2] + 42, cds[0] + 4)
+    out["overlap_into_cd.zip"] = bytes(raw)
+    raw = bytearray(base)  # all three share one local header
+    for c in cds:
+        struct.pack_into("<I", raw, c + 42, lho[0])
+    out["overlap_all.zip"] = bytes(raw)
+    return out
+
+
+def finished_or_resumable(arc, rc, stderr):
+    """after a run: True when the extraction is complete. A run killed between deleting the archive
+    and deleting its journal leaves only the (harmless) journal behind."""
+    if rc == 0:
+        return True
+    if not os.path.exists(arc) and os.path.exists(arc + ".slzstate"):
+        os.remove(arc + ".slzstate")
+        return True
+    return False
+
+
+def kill_test(src_arc, work, ref, name):
+    """destructive extraction killed (SIGKILL / TerminateProcess) at random moments, then resumed"""
+    rnd = random.Random(hash(name) & 0xffff)
+    arc = os.path.join(work, "k-" + os.path.basename(src_arc))
+    dst = os.path.join(work, "kdest-" + name)
+    shutil.copy(src_arc, arc)
+    kills = 0
+    for attempt in range(KILLS + 50):
+        p = subprocess.Popen([CLI, "x", arc, dst, "-q", "-d", "-c", "1"], stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True, errors="replace")
+        try:
+            out, err = p.communicate(timeout=rnd.uniform(0.005, 0.25) if kills < KILLS else 120)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.communicate()
+            kills += 1
+            continue
+        if finished_or_resumable(arc, p.returncode, err):
+            break
+        check(False, f"kill test {name}: run failed after {kills} kills: {err.strip()}")
+        return
+    check(tree(dst) == ref, f"kill test {name}: output differs after {kills} kills")
+    check(not os.path.exists(arc) and not os.path.exists(arc + ".slzstate"), f"kill test {name}: leftovers")
+    print(f"kill test {name}: {kills} forced kills, resumed to an identical result")
+    shutil.rmtree(dst, ignore_errors=True)
+
+
+def fault_test(src_arc, work, ref, name):
+    """every I/O operation of a destructive run fails once, in turn; a clean resume must always
+    produce the exact result"""
+    n, failures_seen = 1, 0
+    while True:
+        arc = os.path.join(work, "f-" + os.path.basename(src_arc))
+        dst = os.path.join(work, "fdest-" + name)
+        shutil.copy(src_arc, arc)
+        env = dict(os.environ, SLZ_FAULT_AT=str(n))
+        r = subprocess.run([FAULT_CLI, "x", arc, dst, "-q", "-d", "-c", "1"], env=env, capture_output=True,
+                           text=True, errors="replace")
+        if r.returncode < 0 or r.returncode > 2:
+            check(False, f"fault test {name}: crash at fault {n}")
+            return
+        if finished_or_resumable(arc, r.returncode, r.stderr):
+            ok = True
+        else:
+            failures_seen += 1
+            r2 = subprocess.run([FAULT_CLI, "x", arc, dst, "-q", "-d", "-c", "1"], capture_output=True, text=True,
+                                errors="replace")
+            ok = finished_or_resumable(arc, r2.returncode, r2.stderr)
+            check(ok, f"fault test {name}: resume after fault {n} failed: {r2.stderr.strip()}")
+        check(tree(dst) == ref, f"fault test {name}: wrong output after fault {n}")
+        shutil.rmtree(dst, ignore_errors=True)
+        for f in (arc, arc + ".slzstate"):
+            if os.path.exists(f):
+                os.remove(f)
+        if "[slz fault injected]" not in r.stderr:  # past the last I/O operation: every point covered
+            break
+        n += 1 if n < 60 else max(1, n // 6)
+    print(f"fault test {name}: {failures_seen} injected I/O failures, all resumed to an identical result")
+
+
 def main():
     work = tempfile.mkdtemp(prefix="slz-test-")
     try:
@@ -182,6 +278,7 @@ def main():
             "backslash.zip": (zip_with([("..\\evil.txt", b"x")]), False),
             "nul.zip": (zip_with([("aQb", b"x")]).replace(b"aQb", b"a\x00b"), False),  # zipfile cuts names at NUL
             "overlap.zip": (overlapping_zip(), False),
+            **{k: (v, False) for k, v in overlap_variants().items()},
             "symlink.zip": (zip_with([symlink_zip("link", "/etc"), ("link/passwd", b"x")]), True),
             "slip.tar": (tar_with([(ti("../evil.txt", 1), b"x")]), False),
             "abs.tar": (tar_with([(ti("/tmp/slz-evil.txt", 1), b"x")]), False),
@@ -218,6 +315,18 @@ def main():
                 check("encrypted" in r.stderr, f"{name}: expected an 'encrypted' error, got {r.stderr.strip()}")
                 check(not os.path.exists(dst) or not any(f for _, _, f in os.walk(dst)), f"{name}: wrote files")
                 shutil.rmtree(dst, ignore_errors=True)
+
+        # pre-existing junction inside dest must not be followed (Windows)
+        if WIN:
+            dst = os.path.join(work, "prej")
+            os.makedirs(dst)
+            os.makedirs(os.path.join(work, "outsidej"))
+            subprocess.run(["cmd", "/c", "mklink", "/J", os.path.join(dst, "a"), os.path.join(work, "outsidej")],
+                           check=True, stdout=subprocess.DEVNULL)
+            p = os.path.join(arcdir, "throughj.zip")
+            open(p, "wb").write(zip_with([("a/x.txt", b"x")]))
+            run("x", p, dst, "-q", expect=False)
+            check(not os.listdir(os.path.join(work, "outsidej")), "followed a pre-existing junction")
 
         # pre-existing symlink inside dest must not be followed (POSIX)
         if not WIN:
@@ -270,6 +379,14 @@ def main():
             check(not os.path.exists(p) and not os.path.exists(p + ".slzstate"), f"destructive {name}: archive/journal left")
             print(f"destructive {name}: {r.stdout.strip()}")
             shutil.rmtree(dst, ignore_errors=True)
+        # 6. forced process kills and injected I/O failures during destructive extraction
+        for name in ("def9.zip", "pax.tar", "nonsolid.7z"):
+            if name in arcs:
+                kill_test(arcs[name], work, want, name)
+        if FAULT_CLI:
+            for name in ("def1.zip", "nonsolid.7z"):
+                if name in arcs:
+                    fault_test(arcs[name], work, want, name)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print(f"{len(failures)} failure(s)")

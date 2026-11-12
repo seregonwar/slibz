@@ -21,7 +21,7 @@ struct lzd {
     void *ru;
     uint8_t ib[LZ_IBUF];
     size_t ip, ie;
-    uint64_t consumed; /* bytes taken from the input so far */
+    uint64_t ibase; /* input bytes before ib[0] */
     /* range decoder */
     uint32_t range, code;
     /* model */
@@ -63,18 +63,29 @@ void lzd_free(lzd *s) {
 
 /* ---------------- input and range decoder ---------------- */
 
-static uint8_t in_byte(lzd *s) {
-    if (s->ip == s->ie) {
-        int64_t k = s->err ? 0 : s->rd(s->ru, s->ib, LZ_IBUF);
-        if (k <= 0) { /* running out of input inside the stream is corruption */
-            if (!s->err) s->err = k < 0 ? (int)k : SLZ_E_CORRUPT;
-            return 0;
-        }
-        s->ip = 0;
+/* slow path: refill the input buffer; at end of input / error it records the error and supplies
+ * a zero byte so the current symbol can finish (the decode loop stops at its next check) */
+static const uint8_t *more(lzd *s) {
+    int64_t k = s->err ? 0 : s->rd(s->ru, s->ib, LZ_IBUF);
+    s->ibase += s->ie;
+    s->ip = 0;
+    if (k > 0) {
         s->ie = (size_t)k;
+        return s->ib;
     }
-    s->consumed++;
+    if (!s->err) s->err = k < 0 ? (int)k : SLZ_E_CORRUPT; /* input ended inside the stream */
+    s->ib[0] = 0;
+    s->ie = 1;
+    return s->ib;
+}
+
+static uint8_t in_byte(lzd *s) {
+    if (s->ip == s->ie) more(s);
     return s->ib[s->ip++];
+}
+
+static uint64_t consumed(const lzd *s) {
+    return s->ibase + s->ip;
 }
 
 static void rc_init(lzd *s) {
@@ -86,52 +97,78 @@ static void rc_init(lzd *s) {
         s->code = s->code << 8 | in_byte(s);
 }
 
-static inline void rc_norm(lzd *s) {
-    if (s->range < (1u << 24)) {
-        s->range <<= 8;
-        s->code = s->code << 8 | in_byte(s);
+/* Range decoder state used by the hot loop. It lives in a local variable whose address only
+ * reaches inline helpers, so the compiler keeps it in registers (dictionary byte stores would
+ * otherwise force reloads of everything reachable from the lzd pointer). */
+typedef struct {
+    uint32_t range, code;
+    const uint8_t *ip, *ie;
+} rcs;
+
+static inline void rc_norm(lzd *s, rcs *rc) {
+    if (rc->range < (1u << 24)) {
+        if (rc->ip == rc->ie) {
+            s->ip = s->ie;
+            rc->ip = more(s);
+            rc->ie = s->ib + s->ie;
+        }
+        rc->range <<= 8;
+        rc->code = rc->code << 8 | *rc->ip++;
     }
 }
 
-static inline unsigned bit(lzd *s, uint16_t *p) {
+static inline unsigned bit(lzd *s, rcs *rc, uint16_t *p) {
     uint32_t bound;
-    rc_norm(s);
-    bound = (s->range >> 11) * *p;
-    if (s->code < bound) {
-        s->range = bound;
+    rc_norm(s, rc);
+    bound = (rc->range >> 11) * *p;
+    if (rc->code < bound) {
+        rc->range = bound;
         *p = (uint16_t)(*p + ((2048 - *p) >> 5));
         return 0;
     }
-    s->range -= bound;
-    s->code -= bound;
+    rc->range -= bound;
+    rc->code -= bound;
     *p = (uint16_t)(*p - (*p >> 5));
     return 1;
 }
 
-static unsigned tree(lzd *s, uint16_t *p, unsigned bits) { /* MSB-first bit tree */
+/* Branch-free variant for literal bits, which are close to random: the update is computed with a
+ * mask instead of a mispredicted branch. Same arithmetic as bit(). */
+static inline unsigned bit_nb(lzd *s, rcs *rc, uint16_t *p) {
+    uint32_t pr = *p, bound, one;
+    rc_norm(s, rc);
+    bound = (rc->range >> 11) * pr;
+    one = 0u - (uint32_t)(rc->code >= bound); /* all ones when the bit is 1 */
+    rc->range = (bound & ~one) | ((rc->range - bound) & one);
+    rc->code -= bound & one;
+    *p = (uint16_t)(pr + (((2048 - pr) >> 5) & ~one) - ((pr >> 5) & one));
+    return one & 1;
+}
+
+static inline unsigned tree(lzd *s, rcs *rc, uint16_t *p, unsigned bits) { /* MSB-first bit tree */
     unsigned m = 1;
     while (m < (1u << bits))
-        m = m << 1 | bit(s, &p[m]);
+        m = m << 1 | bit(s, rc, &p[m]);
     return m - (1u << bits);
 }
 
-static unsigned rtree(lzd *s, uint16_t *p, unsigned bits) { /* LSB-first bit tree */
+static inline unsigned rtree(lzd *s, rcs *rc, uint16_t *p, unsigned bits) { /* LSB-first bit tree */
     unsigned m = 1, r = 0, i;
     for (i = 0; i < bits; i++) {
-        unsigned b = bit(s, &p[m]);
+        unsigned b = bit(s, rc, &p[m]);
         m = m << 1 | b;
         r |= b << i;
     }
     return r;
 }
 
-static uint32_t direct(lzd *s, unsigned bits) {
+static inline uint32_t direct(lzd *s, rcs *rc, unsigned bits) {
     uint32_t r = 0;
     while (bits--) {
-        rc_norm(s);
-        s->range >>= 1;
-        if (s->code >= s->range) {
-            s->code -= s->range;
+        rc_norm(s, rc);
+        rc->range >>= 1;
+        if (rc->code >= rc->range) {
+            rc->code -= rc->range;
             r = r << 1 | 1;
         } else {
             r <<= 1;
@@ -147,18 +184,16 @@ static void flush(lzd *s) {
     s->dflushed = s->dpos;
 }
 
-static inline void put(lzd *s, uint8_t b) {
-    s->dict[s->dpos++] = b;
-    s->pos++;
-    if (s->dpos == s->dsize) {
-        flush(s);
-        s->dpos = s->dflushed = 0;
-    }
+static void wrap(lzd *s) { /* the window is full: hand it out and start over at its beginning */
+    s->dpos = s->dsize;
+    flush(s);
+    s->dpos = s->dflushed = 0;
 }
 
-static inline uint8_t back(const lzd *s, uint32_t d) { /* byte at 0-based distance d (d < pos, d < dsize) */
-    size_t i = s->dpos > d ? s->dpos - d - 1 : s->dpos + s->dsize - d - 1;
-    return s->dict[i];
+static void put(lzd *s, uint8_t b) { /* slow path (stored LZMA2 chunks) */
+    s->dict[s->dpos++] = b;
+    s->pos++;
+    if (s->dpos == s->dsize) wrap(s);
 }
 
 /* ---------------- LZMA ---------------- */
@@ -183,102 +218,164 @@ static int set_props(lzd *s, unsigned d, int lzma2) { /* d = (pb * 5 + lp) * 9 +
     return s->lc + s->lp > 8 ? SLZ_E_METHOD : 0;
 }
 
-static unsigned length(lzd *s, lenc *l, unsigned ps) {
-    if (!bit(s, &l->choice)) return tree(s, l->low[ps], 3);
-    if (!bit(s, &l->choice2)) return 8 + tree(s, l->mid[ps], 3);
-    return 16 + tree(s, l->high, 8);
+static inline unsigned length(lzd *s, rcs *rc, lenc *l, unsigned ps) {
+    if (!bit(s, rc, &l->choice)) return tree(s, rc, l->low[ps], 3);
+    if (!bit(s, rc, &l->choice2)) return 8 + tree(s, rc, l->mid[ps], 3);
+    return 16 + tree(s, rc, l->high, 8);
 }
 
-/* Decode `n` bytes (or up to an end marker when `eos_ok`). The struct fields are the decoder
- * state; only the input/output buffers are touched outside it. */
+/* Decode `n` bytes (or up to an end marker when `eos_ok`). Hot state (range coder, window
+ * position, state, rep distances) is held in locals and written back by SAVE() before any slow
+ * path that reads it from *s, and on exit. */
 static int lzma(lzd *s, uint64_t n, int eos_ok) {
+    rcs rc;
+    uint8_t *dict = s->dict;
+    const size_t dsize = s->dsize;
+    size_t dpos = s->dpos;
+    uint64_t pos = s->pos;
+    unsigned state = s->state;
+    uint32_t rep0 = s->rep[0], rep1 = s->rep[1], rep2 = s->rep[2], rep3 = s->rep[3];
+    const unsigned pbm = (1u << s->pb) - 1, lpm = (1u << s->lp) - 1, lc = s->lc;
+    int r = 0;
+#define SAVE()                                                                                               \
+    (s->range = rc.range, s->code = rc.code, s->ip = (size_t)(rc.ip - s->ib), s->dpos = dpos, s->pos = pos,  \
+     s->state = state, s->rep[0] = rep0, s->rep[1] = rep1, s->rep[2] = rep2, s->rep[3] = rep3)
+#define PUT(b)                                                                                               \
+    do {                                                                                                     \
+        uint8_t byte_ = (b); /* evaluated before dpos changes */                                             \
+        dict[dpos++] = byte_;                                                                                \
+        if (dpos == dsize) {                                                                                 \
+            s->dpos = dpos;                                                                                  \
+            wrap(s);                                                                                         \
+            dpos = 0;                                                                                        \
+        }                                                                                                    \
+    } while (0)
+    rc.range = s->range;
+    rc.code = s->code;
+    rc.ip = s->ib + s->ip;
+    rc.ie = s->ib + s->ie;
     while (n && !s->err) {
-        unsigned ps = (unsigned)(s->pos & ((1u << s->pb) - 1)), len;
+        unsigned ps = (unsigned)pos & pbm, len;
         uint32_t d;
-        if (!bit(s, &s->m.is_match[s->state][ps])) { /* literal */
-            unsigned prev = s->pos ? back(s, 0) : 0, sym = 1;
-            uint16_t *p = s->lit + 0x300 * (((unsigned)(s->pos & ((1u << s->lp) - 1)) << s->lc) +
-                                            (prev >> (8 - s->lc)));
-            if (s->state >= 7) { /* after a match: decode against the byte at rep0 */
-                unsigned mb = s->rep[0] < s->pos ? back(s, s->rep[0]) : 0;
+        if (!bit(s, &rc, &s->m.is_match[state][ps])) { /* literal */
+            unsigned prev = pos ? dict[dpos ? dpos - 1 : dsize - 1] : 0, sym = 1;
+            uint16_t *p = s->lit + 0x300 * ((((unsigned)pos & lpm) << lc) + (prev >> (8 - lc)));
+            if (state >= 7) { /* after a match: decode against the byte at rep0 */
+                unsigned mb = rep0 < pos ? dict[dpos > rep0 ? dpos - rep0 - 1 : dpos + dsize - rep0 - 1] : 0;
+                /* branch-free form (as in the LZMA SDK): offs is 0x100 while the decoded bits
+                 * still equal the match byte's bits, 0 afterwards (plain literal probabilities) */
+                unsigned offs = 0x100;
                 do {
-                    unsigned m = mb >> 7 & 1, b;
+                    unsigned bitv = offs, b;
                     mb <<= 1;
-                    b = bit(s, &p[((1 + m) << 8) + sym]);
+                    offs &= mb;
+                    b = bit_nb(s, &rc, &p[offs + bitv + sym]);
                     sym = sym << 1 | b;
-                    if (m != b) break;
+                    offs ^= bitv & (b - 1); /* bit 0: keep following the match byte only if it was 0 too */
                 } while (sym < 0x100);
+            } else {
+                while (sym < 0x100)
+                    sym = sym << 1 | bit_nb(s, &rc, &p[sym]);
             }
-            while (sym < 0x100)
-                sym = sym << 1 | bit(s, &p[sym]);
-            put(s, (uint8_t)sym);
+            PUT((uint8_t)sym);
+            pos++;
             n--;
-            s->state = s->state < 4 ? 0 : s->state < 10 ? s->state - 3 : s->state - 6;
+            state = state < 4 ? 0 : state < 10 ? state - 3 : state - 6;
         } else {
-            if (!bit(s, &s->m.is_rep[s->state])) { /* match with a new distance */
+            size_t from;
+            if (!bit(s, &rc, &s->m.is_rep[state])) { /* match with a new distance */
                 unsigned ls, sl;
-                len = length(s, &s->m.mlen, ps);
-                s->state = s->state < 7 ? 7 : 10;
+                len = length(s, &rc, &s->m.mlen, ps);
+                state = state < 7 ? 7 : 10;
                 ls = len < 4 ? len : 3;
-                sl = tree(s, s->m.slot[ls], 6);
+                sl = tree(s, &rc, s->m.slot[ls], 6);
                 if (sl < 4) {
                     d = sl;
                 } else {
                     unsigned nb = (sl >> 1) - 1;
                     d = (2 | (sl & 1)) << nb;
                     if (sl < 14) {
-                        d += rtree(s, s->m.special + d - sl - 1, nb);
+                        d += rtree(s, &rc, s->m.special + d - sl - 1, nb);
                     } else {
-                        d += direct(s, nb - 4) << 4;
-                        d += rtree(s, s->m.align, 4);
+                        d += direct(s, &rc, nb - 4) << 4;
+                        d += rtree(s, &rc, s->m.align, 4);
                     }
                 }
                 if (d == 0xffffffffu) { /* end marker */
-                    if (!eos_ok && !s->err) s->err = SLZ_E_CORRUPT;
+                    if (!eos_ok) r = SLZ_E_CORRUPT;
                     break;
                 }
-                s->rep[3] = s->rep[2];
-                s->rep[2] = s->rep[1];
-                s->rep[1] = s->rep[0];
-                s->rep[0] = d;
+                rep3 = rep2;
+                rep2 = rep1;
+                rep1 = rep0;
+                rep0 = d;
             } else {
-                if (!bit(s, &s->m.is_rep0[s->state])) {
-                    if (!bit(s, &s->m.is_rep0_long[s->state][ps])) { /* short rep: one byte at rep0 */
-                        if (s->rep[0] >= s->pos || s->rep[0] >= s->dsize)
-                            return s->err ? s->err : SLZ_E_CORRUPT;
-                        s->state = s->state < 7 ? 9 : 11;
-                        put(s, back(s, s->rep[0]));
+                if (!bit(s, &rc, &s->m.is_rep0[state])) {
+                    if (!bit(s, &rc, &s->m.is_rep0_long[state][ps])) { /* short rep: one byte at rep0 */
+                        if (rep0 >= pos || rep0 >= dsize) {
+                            r = SLZ_E_CORRUPT;
+                            break;
+                        }
+                        state = state < 7 ? 9 : 11;
+                        PUT(dict[dpos > rep0 ? dpos - rep0 - 1 : dpos + dsize - rep0 - 1]);
+                        pos++;
                         n--;
                         continue;
                     }
                 } else {
-                    if (!bit(s, &s->m.is_rep1[s->state])) {
-                        d = s->rep[1];
+                    if (!bit(s, &rc, &s->m.is_rep1[state])) {
+                        d = rep1;
                     } else {
-                        if (!bit(s, &s->m.is_rep2[s->state])) {
-                            d = s->rep[2];
+                        if (!bit(s, &rc, &s->m.is_rep2[state])) {
+                            d = rep2;
                         } else {
-                            d = s->rep[3];
-                            s->rep[3] = s->rep[2];
+                            d = rep3;
+                            rep3 = rep2;
                         }
-                        s->rep[2] = s->rep[1];
+                        rep2 = rep1;
                     }
-                    s->rep[1] = s->rep[0];
-                    s->rep[0] = d;
+                    rep1 = rep0;
+                    rep0 = d;
                 }
-                len = length(s, &s->m.rlen, ps);
-                s->state = s->state < 7 ? 8 : 11;
+                len = length(s, &rc, &s->m.rlen, ps);
+                state = state < 7 ? 8 : 11;
             }
             len += 2;
-            d = s->rep[0];
-            if (d >= s->pos || d >= s->dsize || len > n) return s->err ? s->err : SLZ_E_CORRUPT;
+            if (rep0 >= pos || rep0 >= dsize || len > n) {
+                r = SLZ_E_CORRUPT;
+                break;
+            }
             n -= len;
-            while (len--)
-                put(s, back(s, d));
+            pos += len;
+            /* copy in runs that are contiguous on both sides of the circular window; a forward
+             * byte copy is correct for overlapping runs (distance < length) */
+            from = dpos > rep0 ? dpos - rep0 - 1 : dpos + dsize - rep0 - 1;
+            while (len) {
+                size_t k = len, i;
+                if (k > dsize - dpos) k = dsize - dpos;
+                if (k > dsize - from) k = dsize - from;
+                for (i = 0; i < k; i++)
+                    dict[dpos + i] = dict[from + i];
+                dpos += k;
+                from += k;
+                len -= (unsigned)k;
+                if (from == dsize) from = 0;
+                if (dpos == dsize) {
+                    s->dpos = dpos;
+                    wrap(s);
+                    dpos = 0;
+                }
+            }
         }
-        if (s->dpos - s->dflushed >= LZ_FLUSH) flush(s);
+        if (dpos - s->dflushed >= LZ_FLUSH) {
+            s->dpos = dpos;
+            flush(s);
+        }
     }
-    return s->err;
+    SAVE();
+    return s->err ? s->err : r; /* the root cause (e.g. truncated input) wins */
+#undef SAVE
+#undef PUT
 }
 
 static void dict_reset(lzd *s) {
@@ -354,11 +451,15 @@ int lzd_lzma2(lzd *s, uint64_t n) {
         }
         n -= un;
         {
-            uint64_t start = s->consumed;
+            uint64_t start = consumed(s);
             rc_init(s);
             if ((r = lzma(s, un, 0))) break;
-            rc_norm(s); /* the encoder's final flush byte belongs to this chunk */
-            if (s->consumed - start != pk || s->code != 0) { /* exact packed size, cleanly finished */
+            if (s->range <
+                (1u << 24)) { /* final normalization: the encoder's last byte belongs to the chunk */
+                s->range <<= 8;
+                s->code = s->code << 8 | in_byte(s);
+            }
+            if (consumed(s) - start != pk || s->code != 0) { /* exact packed size, cleanly finished */
                 r = SLZ_E_CORRUPT;
                 break;
             }
@@ -376,7 +477,7 @@ void lzd_io(lzd *s, rd_fn rd, void *ru, wr_fn wr, void *wu) {
     s->wr = wr;
     s->wu = wu;
     s->ip = s->ie = 0;
-    s->consumed = 0;
+    s->ibase = 0;
     s->dpos = s->dflushed = 0;
     s->err = 0;
 }
