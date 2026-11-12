@@ -44,6 +44,8 @@ typedef struct {
     inf *z;
     uint8_t *buf;
     rng src; /* compressed bytes of the current entry */
+    uint8_t *nbc, *nbu; /* .slz: compressed and decoded block buffers */
+    void *zd;           /* .slz: zstd decoder */
     const slz_entry *e;
     size_t k;
     uint64_t wpos, doff;
@@ -60,7 +62,8 @@ static int w_wr(void *u, const uint8_t *p, size_t n) {
     t = os_add(&j->out, (int64_t)n);
     if (j->o->max_total && (uint64_t)t > j->o->max_total) return SLZ_E_LIMIT;
     if (j->o->progress && j->o->progress(j->o->user, (uint64_t)t, (uint64_t)j->total)) return SLZ_E_CANCEL;
-    if (j->a->fmt != SLZ_TAR && j->a->fmt != SLZ_TGZ) w->crc = slz_crc32(w->crc, p, n); /* tar: no checksum */
+    if (j->a->fmt != SLZ_TAR && j->a->fmt != SLZ_TGZ && j->a->fmt != SLZ_SLZ)
+        w->crc = slz_crc32(w->crc, p, n); /* tar: none; .slz: xxHash64 per block and file */
     if ((r = os_pwrite(w->out, p, n, w->wpos))) return r;
     w->wpos += n;
     return 0;
@@ -311,6 +314,113 @@ static int one7(void *wv, size_t k, const jrec *res) {
     return j->destr && w->src.end - j->lastck >= j->every ? ckpt(w, w->src.end * 8, 1) : 0;
 }
 
+/* ---------- .slz: a block is decoded once; every file range it covers is written ---------- */
+
+/* a partly written file (spanning several blocks): closed now, or in destructive mode kept until the
+ * next checkpoint makes it durable */
+static int park(wk *w) {
+    job *j = w->j;
+    int r;
+    if (!j->destr) {
+        os_close(w->out);
+    } else {
+        if (j->np == NPEND && (r = sync_pend(j))) return r;
+        j->pend[j->np++] = w->out;
+    }
+    w->out = OS_BAD;
+    return 0;
+}
+
+static int one_slz(void *wv, size_t k, const jrec *res) {
+    wk *w = (wk *)wv;
+    job *j = w->j;
+    const natidx *n = j->a->nat;
+    const natblock *b = &n->b[k];
+    uint64_t bend = b->start + b->usize;
+    size_t i;
+    int r;
+    (void)res; /* a block restarts from its beginning on resume */
+    w->k = k;
+    w->e = NULL;
+    w->out = OS_BAD;
+    w->doff = w->src.pos = b->off;
+    w->src.end = b->off + b->csize;
+    if (!w->nbu && (!(w->nbc = (uint8_t *)malloc(n->max_c + 1)) || !(w->nbu = (uint8_t *)malloc(n->max_u + 1))))
+        return SLZ_E_NOMEM;
+    if ((r = nat_decode(w->in, b, w->nbc, w->nbu, &w->zd))) return r;
+    for (i = nat_first(j->a, b->start); i < n->norder; i++) {
+        uint32_t ei = n->order[i];
+        const slz_entry *e = &j->a->e[ei];
+        uint64_t s0, s1;
+        char nm[4096];
+        int len;
+        if (e->off >= bend) break;
+        s0 = e->off > b->start ? e->off : b->start;
+        s1 = e->off + e->usize < bend ? e->off + e->usize : bend;
+        if ((len = sanitize(e->name, e->nlen, nm, sizeof nm)) < 0) return len;
+        if (!len) continue;
+        w->e = e;
+        if (!n->spans[ei]) { /* the whole file is in this block: verify, create, write, finish */
+            if (xxh64(w->nbu + (e->off - b->start), (size_t)e->usize, 0) != n->ehash[ei]) return SLZ_E_CORRUPT;
+            if ((r = os_create(&w->dst, nm, create_mode(j), e->mode, &w->out))) return r;
+            w->wpos = 0;
+            if ((r = w_wr(w, w->nbu + (s0 - b->start), (size_t)(s1 - s0))) || (r = finish(w, e, 0))) return r;
+        } else { /* one slice of a file pre-created by prep_slz; other blocks write the rest */
+            if ((r = os_create(&w->dst, nm, OC_RESUME, e->mode, &w->out))) return r;
+            w->wpos = s0 - e->off;
+            if ((r = w_wr(w, w->nbu + (s0 - b->start), (size_t)(s1 - s0))) || (r = park(w))) return r;
+        }
+        w->e = NULL;
+    }
+    return j->destr && w->src.end - j->lastck >= j->every ? ckpt(w, w->src.end * 8, 1) : 0;
+}
+
+/* .slz before the blocks: directories, empty files, and every file spanning several blocks
+ * (created once so that the blocks' workers only open and write their slice) */
+static int prep_slz(job *j, wk *w) {
+    const natidx *n = j->a->nat;
+    size_t i;
+    int r = 0;
+    for (i = 0; i < j->a->n && !r; i++) {
+        const slz_entry *e = &j->a->e[i];
+        char nm[4096];
+        int len = sanitize(e->name, e->nlen, nm, sizeof nm);
+        if (len <= 0) {
+            r = len;
+            continue;
+        }
+        w->e = e;
+        w->wpos = 0;
+        if (e->type == SLZ_DIR) {
+            r = os_create(&w->dst, nm, OC_MKDIR, 0, NULL);
+        } else if (!e->usize) {
+            if (!(r = os_create(&w->dst, nm, create_mode(j), e->mode, &w->out))) r = finish(w, e, 0);
+        } else if (n->spans[i]) { /* on resume the data written so far must survive */
+            if (!(r = os_create(&w->dst, nm, j->resumed ? OC_RESUME : create_mode(j), e->mode, &w->out))) r = park(w);
+        }
+    }
+    w->e = NULL;
+    return r;
+}
+
+/* .slz after the blocks: mtime of the files that spanned blocks */
+static int done_slz(job *j, wk *w) {
+    const natidx *n = j->a->nat;
+    size_t i;
+    int r = 0;
+    for (i = 0; i < j->a->n && !r; i++) {
+        const slz_entry *e = &j->a->e[i];
+        char nm[4096];
+        if (e->type != SLZ_FILE || !e->usize || !n->spans[i] || sanitize(e->name, e->nlen, nm, sizeof nm) <= 0) continue;
+        if (!(r = os_create(&w->dst, nm, OC_RESUME, e->mode, &w->out))) {
+            if (!(j->o->flags & SLZ_NO_MTIME)) os_mtime(w->out, e->mtime);
+            os_add(&j->files, 1);
+            r = park(w);
+        }
+    }
+    return r;
+}
+
 /* 7z entries without data: directories and empty files */
 static int prep7(job *j, wk *w) {
     size_t i;
@@ -356,6 +466,9 @@ static void wk_free(wk *w) {
     os_dst_close(&w->dst);
     free(w->buf);
     free(w->z);
+    free(w->nbc);
+    free(w->nbu);
+    nat_zfree(w->zd);
 }
 
 static void worker(void *p) {
@@ -500,12 +613,13 @@ static int destructive(job *j, wk *w) {
         goto out; /* re-punch: the crash may have happened between journal write and punch */
     }
     j->lastck = j->j.punched;
-    if (j->a->fmt == SLZ_7Z && (r = prep7(j, w))) goto out;
+    if ((j->a->fmt == SLZ_7Z && (r = prep7(j, w))) || (j->a->fmt == SLZ_SLZ && (r = prep_slz(j, w)))) goto out;
     for (k = j->resumed ? (size_t)j->j.idx : 0; k < j->n && !r; k++)
         if ((r = j->unit(w, k, (j->resumed && k == j->j.idx) ? &j->j : NULL)) && w->out != OS_BAD) {
             os_close(w->out);
             w->out = OS_BAD;
         }
+    if (!r && j->a->fmt == SLZ_SLZ) r = done_slz(j, w);
     if (!r && !(r = sync_pend(j))) {
         j->j.idx = j->n;
         j->j.bitpos = j->j.ooff = 0;
@@ -549,9 +663,10 @@ int slz_extract(slz_archive *a, const char *dest, slz_opts *opts) {
     j.a = a;
     j.o = opts;
     j.dest = dest;
-    j.n = a->fmt == SLZ_7Z ? a->z7->nf : a->n; /* work items: 7z folders, otherwise entries */
-    j.unit = a->fmt == SLZ_7Z ? one7 : one;
-    j.punch_base = a->fmt == SLZ_7Z ? PALIGN : 0; /* keep the 7z signature header */
+    /* work items: 7z folders, .slz blocks, otherwise entries */
+    j.n = a->fmt == SLZ_7Z ? a->z7->nf : a->fmt == SLZ_SLZ ? a->nat->nb : a->n;
+    j.unit = a->fmt == SLZ_7Z ? one7 : a->fmt == SLZ_SLZ ? one_slz : one;
+    j.punch_base = a->fmt == SLZ_7Z || a->fmt == SLZ_SLZ ? PALIGN : 0; /* keep the header for re-opening */
     j.arw = j.jf = OS_BAD;
     j.destr = !!(opts->flags & SLZ_DESTRUCTIVE);
     j.every = opts->checkpoint ? opts->checkpoint : 64u << 20;
@@ -583,14 +698,19 @@ int slz_extract(slz_archive *a, const char *dest, slz_opts *opts) {
         wk_free(&w);
     } else {
         unsigned t = opts->threads ? opts->threads : os_ncpu();
-        if (a->fmt == SLZ_7Z) { /* directories and empty files first, then folders in parallel */
+        if (a->fmt == SLZ_7Z || a->fmt == SLZ_SLZ) { /* directories, empty files first; units in parallel */
             wk w;
-            if (!(r = wk_init(&w, &j))) r = prep7(&j, &w);
+            if (!(r = wk_init(&w, &j))) r = a->fmt == SLZ_7Z ? prep7(&j, &w) : prep_slz(&j, &w);
             wk_free(&w);
         }
         if (!r) {
             os_run(MIN(t, (unsigned)MIN(j.n ? j.n : 1, 64)), worker, &j);
             r = (int)j.err;
+        }
+        if (!r && a->fmt == SLZ_SLZ) {
+            wk w;
+            if (!(r = wk_init(&w, &j))) r = done_slz(&j, &w);
+            wk_free(&w);
         }
     }
     opts->files = (uint64_t)j.files;

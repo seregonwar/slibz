@@ -30,6 +30,8 @@
 #define os_open_journal slz_i_os_open_journal
 #define os_sync_parent  slz_i_os_sync_parent
 #define os_dst_sync     slz_i_os_dst_sync
+#define os_walk         slz_i_os_walk
+#define os_rename       slz_i_os_rename
 #define inf_new         slz_i_inf_new
 #define inf_reset       slz_i_inf_reset
 #define inf_run         slz_i_inf_run
@@ -120,6 +122,12 @@ int os_dst_sync(os_dst *d); /* make every directory entry created since the last
  * process extracting the same archive gets SLZ_E_STATE) */
 int os_open_journal(const char *path, os_fd *fd);
 int os_sync_parent(const char *path); /* make the directory entry of `path` durable */
+/* Visit `root` (a file, or a directory recursively, never following links; links and special files
+ * are skipped). rel = archive-style name: the root's own name, then '/'-separated components. */
+typedef int (*os_walk_cb)(void *u, const char *path, const char *rel, int is_dir, uint64_t size, int64_t mtime,
+                          unsigned mode);
+int os_walk(const char *root, os_walk_cb cb, void *u);
+int os_rename(const char *from, const char *to); /* atomic replace of `to` */
 /* create `rel` (sanitized, '/'-separated) below the destination without ever following a link */
 int os_create(os_dst *d, const char *rel, int mode, unsigned perm, os_fd *fd);
 unsigned os_ncpu(void);
@@ -195,6 +203,47 @@ typedef struct { /* BCJ x86 decoder in front of a writer: wr_fn = bcj_wr, contex
 int bcj_wr(void *u, const uint8_t *p, size_t n);
 int bcj_finish(bcj *f);
 
+/* ===================== lz4.c: LZ4 block codec, xxHash64 ===================== */
+
+typedef struct { /* streaming xxHash64 */
+    uint64_t v[4], total, seed;
+    uint8_t mem[32];
+    unsigned mn;
+} xxh64_t;
+void xxh64_init(xxh64_t *s, uint64_t seed);
+void xxh64_update(xxh64_t *s, const void *data, size_t n);
+uint64_t xxh64_digest(const xxh64_t *s);
+uint64_t xxh64(const void *data, size_t n, uint64_t seed);
+size_t lz4_bound(size_t n);
+size_t lz4_compress(const uint8_t *src, size_t n, uint8_t *dst);          /* 0 = out of memory */
+int lz4_decompress(const uint8_t *src, size_t sn, uint8_t *dst, size_t n); /* exactly n bytes */
+
+/* ===================== native.c: the .slz format ===================== */
+
+typedef struct {
+    uint64_t off, start, hash; /* file offset, stream offset, xxHash64 of the decoded bytes */
+    uint32_t csize, usize;
+    uint8_t codec;
+} natblock;
+
+typedef struct {
+    natblock *b;
+    size_t nb;
+    uint64_t total;   /* stream size */
+    uint32_t *order;  /* entries with data, sorted by stream offset */
+    size_t norder;
+    uint8_t *spans;   /* per entry: its content crosses a block boundary */
+    uint64_t *ehash;  /* per entry: xxHash64 of its content */
+    uint32_t max_c, max_u;
+} natidx;
+
+int open_slz(slz_archive *a, const uint8_t *head, size_t hn);
+int nat_decode(os_fd fd, const natblock *b, uint8_t *cbuf, uint8_t *out, void **zctx); /* + hash check */
+void nat_free(natidx *n);
+void nat_zfree(void *zctx);
+size_t nat_first(const slz_archive *a, uint64_t start); /* first ordered entry ending after start */
+size_t nat_block_of(const natidx *n, uint64_t pos);
+
 /* ===================== sevenz.c: 7z ===================== */
 
 typedef struct {
@@ -257,6 +306,7 @@ struct slz_archive {
     char *names;              /* all entry names, NUL-terminated */
     const slz_entry **sorted; /* by name, built on the first slz_dir */
     z7 *z7;                   /* 7z: folders and entry -> folder map */
+    natidx *nat;              /* .slz: blocks and stream map */
     uint64_t fp;              /* fingerprint of the index (journal identity check) */
 };
 
