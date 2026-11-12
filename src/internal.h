@@ -132,10 +132,11 @@ int os_cas(volatile int64_t *p, int64_t expect, int64_t v); /* atomic compare-an
 #define WIN     32768u                         /* DEFLATE window */
 #define IBUF    (1u << 20)                     /* input buffer */
 #define OBUF    (WIN + (4u << 20))             /* output buffer: window history + 4 MiB of new output */
-#define LT_BITS 10                             /* primary table bits, literal/length code */
-#define DT_BITS 8                              /* primary table bits, distance code */
-#define LT_SIZE ((1u << LT_BITS) + (1u << 15)) /* primary + worst-case subtables */
-#define DT_SIZE ((1u << DT_BITS) + (1u << 15))
+#define LT_BITS 11 /* primary table bits, literal/length code */
+#define DT_BITS 8  /* primary table bits, distance code (also holds the 7-bit code-length code) */
+/* primary + subtables: one subtable of 2^(15 - bits) entries at most per code longer than bits */
+#define LT_SIZE ((1u << LT_BITS) + 288u * (1u << (15 - LT_BITS)))
+#define DT_SIZE ((1u << DT_BITS) + 32u * (1u << (15 - DT_BITS)))
 
 typedef int64_t (*rd_fn)(void *u, uint8_t *b, size_t n);   /* bytes read, 0 = end, < 0 = error */
 typedef int (*wr_fn)(void *u, const uint8_t *p, size_t n); /* 0 or error (stops decoding) */
@@ -148,6 +149,7 @@ struct inf {
     unsigned pad; /* zero bytes appended past the end of input (must not be consumed) */
     int eof;
     int fixed;            /* 1: fixed tables built; < 0: -1-n bits to skip at start (resume) */
+    int bmi2;             /* CPU supports BMI2: use the BMI2 build of the hot loop */
     uint64_t ibase;       /* absolute input offset of ib[0] */
     const uint8_t *p, *e; /* unread input: [p, e) inside ib */
     uint8_t *ib;
@@ -158,7 +160,6 @@ struct inf {
     wr_fn wr;
     ck_fn ck;
     void *ru, *wu;     /* reader context; writer + checkpoint context */
-    unsigned flm, fdm; /* primary bits of the cached fixed tables */
     uint32_t lt[LT_SIZE], dt[DT_SIZE];
 };
 

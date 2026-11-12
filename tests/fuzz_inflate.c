@@ -5,7 +5,10 @@
  * 1. random data of varied entropy, compressed by zlib with random level/strategy/window/memLevel,
  *    decoded by slz with random input chunk sizes (stresses refill + stored-block paths)
  *    -> output must be identical and the stream end exact.
- * 2. the same streams mutated (bit flips, truncation, splices) -> no crash; whenever zlib accepts,
+ * 2. resume, as destructive extraction does it: block-boundary checkpoints (bit position, output
+ *    so far) recorded through the ck hook; decoding restarted from a random one with inf_reset
+ *    (byte offset, skip bits, last 32 KiB of output as history) must produce the rest exactly.
+ * 3. the same streams mutated (bit flips, truncation, splices) -> no crash; whenever zlib accepts,
  *    slz must accept with identical output. */
 #include "internal.h"
 #include <stdio.h>
@@ -19,6 +22,14 @@ static uint32_t rnd(void) {
     rs ^= rs << 17;
     return (uint32_t)(rs >> 11);
 }
+/* separate generator for decoder-driven choices (read chunk sizes, checkpoint sampling): how
+ * often the decoder reads or reaches a block boundary must not shift the main sequence, so runs
+ * of different decoder versions with the same seed see the same data and mutations */
+static uint32_t dr = 1;
+static uint32_t drnd(void) {
+    dr = dr * 1103515245u + 12345u;
+    return dr >> 8;
+}
 
 typedef struct {
     const uint8_t *in;
@@ -30,7 +41,7 @@ static int64_t rd(void *u, uint8_t *b, size_t n) {
     io *s = (io *)u;
     size_t k = MIN(n, s->n - s->pos);
     if (s->maxchunk) {
-        size_t c = 1 + rnd() % s->maxchunk;
+        size_t c = 1 + drnd() % s->maxchunk;
         k = MIN(k, c);
     } /* MIN evaluates twice */
     memcpy(b, s->in + s->pos, k);
@@ -59,6 +70,45 @@ static void gen(uint8_t *d, size_t n) {
     }
 }
 
+/* block-boundary checkpoints of the last decode (ck hook) */
+static uint64_t ckbit[64], ckout[64];
+static unsigned nck, ckseen;
+static int ck(void *u, inf *z) {
+    unsigned k = ckseen++;
+    (void)u;
+    if (k >= 64) /* reservoir sample once the table is full */
+        k = drnd() % ckseen;
+    if (k < 64) {
+        ckbit[k] = inf_bitpos(z);
+        ckout[k] = z->obase + z->op;
+        if (k >= nck) nck = k + 1;
+    }
+    return 0;
+}
+
+/* decode cn bytes of c starting at a checkpoint: input byte bit/8 after skipping bit%8 bits,
+ * history = the hn output bytes before `out` */
+static int slz_resume(inf *z, const uint8_t *c, size_t cn, uint64_t bit, const uint8_t *hist, size_t hn,
+                      uint64_t out, uint8_t *o, size_t cap, size_t *on, size_t maxchunk) {
+    io s;
+    int r;
+    s.in = c;
+    s.n = cn;
+    s.pos = (size_t)(bit / 8);
+    s.maxchunk = maxchunk;
+    s.out = o;
+    s.on = 0;
+    s.cap = cap;
+    inf_reset(z, bit / 8, (unsigned)(bit % 8), hist, hn, out);
+    z->rd = rd;
+    z->wr = wr;
+    z->ck = NULL;
+    z->ru = z->wu = &s;
+    r = inf_run(z);
+    *on = s.on;
+    return r;
+}
+
 static int slz_inflate(inf *z, const uint8_t *c, size_t cn, uint8_t *out, size_t cap, size_t *on,
                        size_t maxchunk, uint64_t *end) {
     io s;
@@ -73,7 +123,8 @@ static int slz_inflate(inf *z, const uint8_t *c, size_t cn, uint8_t *out, size_t
     inf_reset(z, 0, 0, NULL, 0, 0);
     z->rd = rd;
     z->wr = wr;
-    z->ck = NULL;
+    z->ck = ck;
+    nck = ckseen = 0;
     z->ru = z->wu = &s;
     r = inf_run(z);
     *on = s.on;
@@ -104,7 +155,7 @@ static int zlib_inflate(const uint8_t *c, size_t cn, uint8_t *out, size_t cap, s
 }
 
 int main(int argc, char **argv) {
-    long it = argc > 1 ? atol(argv[1]) : 1000, i, lenient = 0, mut_ok = 0;
+    long it = argc > 1 ? atol(argv[1]) : 1000, i, lenient = 0, mut_ok = 0, resumed = 0;
     size_t MAXN = 3u << 20, CAP = 8u << 20;
     uint8_t *d = (uint8_t *)malloc(MAXN), *c = (uint8_t *)malloc(CAP), *o1 = (uint8_t *)malloc(CAP),
             *o2 = (uint8_t *)malloc(CAP);
@@ -139,6 +190,21 @@ int main(int argc, char **argv) {
                     (unsigned long long)end, cn, mc);
             return 1;
         }
+        if (nck) { /* resume from a random block boundary */
+            unsigned k = rnd() % nck;
+            size_t out = (size_t)ckout[k], hn = out < 32768 ? out : 32768;
+            if (out > n || ckbit[k] > (uint64_t)cn * 8) {
+                fprintf(stderr, "BAD CHECKPOINT iter %ld: bit=%llu out=%zu\n", i, (unsigned long long)ckbit[k], out);
+                return 1;
+            }
+            r = slz_resume(z, c, cn, ckbit[k], d + out - hn, hn, out, o1, CAP, &on1, mc);
+            if (r || on1 != n - out || memcmp(o1, d + out, on1) || inf_bitpos(z) / 8 != cn) {
+                fprintf(stderr, "RESUME MISMATCH iter %ld: r=%d bit=%llu out=%zu got=%zu want=%zu\n", i, r,
+                        (unsigned long long)ckbit[k], out, on1, n - out);
+                return 1;
+            }
+            resumed++;
+        }
         for (m = 0; m < 4; m++) { /* mutations */
             size_t mn = cn, k, flips = 1 + rnd() % 4;
             uint8_t *x = o2; /* reuse as mutation buffer; outputs go to d-sized buffers below */
@@ -164,8 +230,9 @@ int main(int argc, char **argv) {
             if (!rz) mut_ok++;
         }
     }
-    printf("fuzz_inflate: %ld streams ok, %ld mutated streams valid for both, %ld accepted only by slz\n", it,
-           mut_ok, lenient);
+    printf("fuzz_inflate: %ld streams ok (%ld resumed from a checkpoint), %ld mutated streams valid for both, "
+           "%ld accepted only by slz\n",
+           it, resumed, mut_ok, lenient);
     free(d);
     free(c);
     free(o1);
