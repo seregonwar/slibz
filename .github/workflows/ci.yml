@@ -34,6 +34,25 @@ jobs:
           cmake --build build -j4
       - name: tests (round trips, hostile archives, fuzz, kills, injected I/O faults, resume)
         run: ctest --test-dir build --output-on-failure -j 8
+      - name: archive fuzzer (short run over small seeds of every format)
+        run: |
+          cmake --build build --target fuzz_archive # sanitizer flags from the slz target
+          python3 - <<'EOF'
+          import os, random, sys
+          sys.argv, src = ["run_tests.py", "-", "-"], "seeds-src"
+          sys.path.insert(0, "tests")
+          import run_tests
+          rnd = random.Random(7)
+          files = {"text/lorem.txt": b"lorem ipsum dolor sit amet " * 400, "e.txt": b"", "z.bin": bytes(70000),
+                   "r/r.bin": rnd.randbytes(5000), "r/m.bin": rnd.randbytes(64) * 300}
+          for name, data in files.items():
+              os.makedirs(os.path.dirname(os.path.join(src, name)), exist_ok=True)
+              open(os.path.join(src, name), "wb").write(data)
+          os.makedirs("seeds")
+          print("seeds:", *sorted(run_tests.pack_all(src, os.path.abspath("seeds"))))
+          EOF
+          build/slz a seeds/tree.slz seeds-src/* -q
+          build/fuzz_archive fzwork 400 1 seeds/*
       - name: release build + install
         run: |
           cmake -S . -B rel -DCMAKE_C_COMPILER=${{ matrix.cc }} -DSLZ_TESTS=OFF

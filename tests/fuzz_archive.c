@@ -1,4 +1,4 @@
-/* slz - in-process fuzzer for the whole pipeline (POSIX; build with ASan + UBSan).
+/* slz - in-process fuzzer for the whole pipeline (POSIX; cmake -DSLZ_SANITIZE=ON, target fuzz_archive).
  * Copyright (c) 2026 Seregon. SPDX-License-Identifier: MIT
  *
  *   fuzz_archive <workdir> <iterations> <seed> <archive>...
