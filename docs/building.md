@@ -9,8 +9,12 @@ cmake -S . -B build && cmake --build build --config Release
 ```
 
 ```bash
-ctest --test-dir build -C Release --output-on-failure
+ctest --test-dir build -C Release --output-on-failure -j 8
 ```
+
+The end-to-end suite (`tests/run_tests.py`) is registered as several `archives-*` tests that share one
+prepared corpus, so `-j` runs them in parallel; `python tests/run_tests.py <slz> <slz-test>` still runs
+everything in one process.
 
 ## Integration
 
