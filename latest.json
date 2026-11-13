@@ -1,6 +1,6 @@
 {
- "commit": "a37bddad7d713586f5f2ecf1219ac06470ad8075",
- "commit_time": "2026-11-13T12:34:37Z",
+ "commit": "2203d38ce1b76889583d88f465c81754ad992bd0",
+ "commit_time": "2026-11-13T12:45:45Z",
  "decode": {
   "best_of": {
    "deflate": "5 per process, 3 processes",
@@ -9,41 +9,41 @@
   "bytes": 211938580,
   "corpus": "Silesia",
   "deflate": {
-   "libdeflate": 1252.0,
-   "slz": 805.0,
-   "zlib": 522.0,
-   "zlib-ng": 975.0
+   "libdeflate": 1100.0,
+   "slz": 973.0,
+   "zlib": 463.0,
+   "zlib-ng": 795.0
   },
   "files": 12,
   "lzma2": {
-   "slz": 105.0,
-   "xz": 186.0
+   "slz": 89.0,
+   "xz": 153.0
   },
   "rounds": {
    "deflate": [
     {
-     "libdeflate": 1246.0,
-     "slz": 803.0,
-     "zlib": 522.0,
-     "zlib-ng": 970.0
+     "libdeflate": 1099.0,
+     "slz": 968.0,
+     "zlib": 463.0,
+     "zlib-ng": 795.0
     },
     {
-     "libdeflate": 1252.0,
-     "slz": 805.0,
-     "zlib": 522.0,
-     "zlib-ng": 975.0
+     "libdeflate": 1099.0,
+     "slz": 960.0,
+     "zlib": 463.0,
+     "zlib-ng": 795.0
     },
     {
-     "libdeflate": 1250.0,
-     "slz": 802.0,
-     "zlib": 521.0,
-     "zlib-ng": 972.0
+     "libdeflate": 1100.0,
+     "slz": 973.0,
+     "zlib": 463.0,
+     "zlib-ng": 793.0
     }
    ],
    "lzma2": [
     {
-     "slz": 105.0,
-     "xz": 186.0
+     "slz": 89.0,
+     "xz": 153.0
     }
    ]
   }
@@ -51,83 +51,83 @@
  "e2e": {
   "7z": {
    "silesia-nonsolid.7z": {
-    "7z l": 0.002105,
-    "7z x": 1.282109,
-    "bsdtar -x": 1.297573,
-    "slz list": 0.001031,
-    "slz x": 0.762627,
-    "slz x -j 1": 2.129213
+    "7z l": 0.002305,
+    "7z x": 1.592391,
+    "bsdtar -x": 1.598473,
+    "slz list": 0.001156,
+    "slz x": 0.893274,
+    "slz x -j 1": 2.5174
    },
    "silesia.7z": {
-    "7z l": 0.002279,
-    "7z x": 0.893169,
-    "bsdtar -x": 1.254786,
-    "slz list": 0.001089,
-    "slz x": 2.164719,
-    "slz x -j 1": 2.123393
+    "7z l": 0.002344,
+    "7z x": 1.057185,
+    "bsdtar -x": 1.537073,
+    "slz list": 0.001157,
+    "slz x": 2.464248,
+    "slz x -j 1": 2.463967
    }
   },
   "list": {
    "500k entries": {
-    "7z l": 3.438936,
-    "bsdtar -t": 2.276204,
-    "python zipfile": 1.49456,
-    "slz": 0.070493,
-    "unzip -Z1": 0.44116
+    "7z l": 4.062116,
+    "bsdtar -t": 2.80514,
+    "python zipfile": 1.989906,
+    "slz": 0.09561,
+    "unzip -Z1": 0.817135
    },
    "silesia.zip": {
-    "7z l": 0.002075,
-    "bsdtar -t": 0.001311,
-    "python zipfile": 0.018943,
-    "slz": 0.000971,
-    "unzip -Z1": 0.001429
+    "7z l": 0.002303,
+    "bsdtar -t": 0.001525,
+    "python zipfile": 0.02466,
+    "slz": 0.001124,
+    "unzip -Z1": 0.001673
    }
   },
   "runs": 3,
   "targz": {
    "silesia.tar.gz": {
-    "GNU tar -xzf": 0.916395,
-    "bsdtar": 0.328305,
-    "pigz -d | tar -x": 0.338959,
-    "slz": 0.32387
+    "GNU tar -xzf": 1.06947,
+    "bsdtar": 0.379659,
+    "pigz -d | tar -x": 0.418828,
+    "slz": 0.267056
    }
   },
   "threads": 4,
   "zip": {
    "silesia.zip": {
-    "7z x": 0.678739,
-    "bsdtar": 0.287125,
-    "python zipfile": 0.572751,
-    "slz": 0.825156,
-    "slz -j 1": 0.790727,
-    "unzip": 0.988257
+    "7z x": 0.817826,
+    "bsdtar": 0.344778,
+    "python zipfile": 0.694338,
+    "slz": 0.855896,
+    "slz -j 1": 0.919926,
+    "unzip": 1.153287
    }
   }
  },
  "env": {
   "cc": "gcc 13.3.0",
-  "cpu": "AMD EPYC 9V45 96-Core Processor",
-  "image": "ubuntu24 20261111.370.1",
+  "cpu": "AMD EPYC 9V74 80-Core Processor",
+  "image": "ubuntu24 20261101.360.1",
   "kernel": "7.0.0-1017-azure",
   "os": "Ubuntu 24.04.5 LTS",
   "runner": "GitHub Actions",
   "threads": 4
  },
  "event": "push",
- "measured_at": "2026-11-13T12:37:48Z",
+ "measured_at": "2026-11-13T12:49:48Z",
  "ref": "refs/heads/main",
  "repository": "seregonwar/slibz",
  "run_attempt": "1",
- "run_id": "43426348151",
- "run_url": "https://github.com/seregonwar/slibz/actions/runs/43426348151",
+ "run_id": "43427918493",
+ "run_url": "https://github.com/seregonwar/slibz/actions/runs/43427918493",
  "schema": 1,
- "subject": "ci: start the slowest end-to-end tests first",
+ "subject": "inflate: keep the distance table base in a register on arm64",
  "timing": {
-  "build": 2.3,
-  "deflate": 32.7,
-  "e2e": 79.7,
-  "lzma2": 64.1,
-  "total": 179.7
+  "build": 4.9,
+  "deflate": 38.7,
+  "e2e": 94.9,
+  "lzma2": 88.3,
+  "total": 228.0
  },
  "versions": {
   "7-Zip": "7-Zip (z) 26.06 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-11-06",
