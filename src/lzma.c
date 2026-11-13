@@ -443,12 +443,15 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
      * wait for it to come back from the window */
     unsigned prev = pos ? dict[dpos ? dpos - 1 : dsize - 1] : 0;
     const uint8_t *ifast; /* last input position at which a symbol may start without a refill */
-    size_t dlim;          /* window position at which output is handed to wr: flush or wrap */
+    size_t dlim;          /* window position of the slow path: flush, wrap, or the last byte to decode */
+    const uint64_t stop = pos + n; /* modulo 2^64: n = UINT64_MAX (unknown size) never stops */
     int r = 0;
 #define SAVE()                                                                                               \
     (s->range = rc.range, s->code = rc.code, s->ip = (size_t)(rc.ip - s->ib), s->dpos = dpos, s->pos = pos,  \
      s->state = state, s->rep[0] = rep0, s->rep[1] = rep1, s->rep[2] = rep2, s->rep[3] = rep3)
-#define DLIM() (dlim = dsize - s->dflushed > LZ_FLUSH ? s->dflushed + LZ_FLUSH : dsize)
+#define DLIM()                                                                                               \
+    (dlim = dsize - s->dflushed > LZ_FLUSH ? s->dflushed + LZ_FLUSH : dsize,                                 \
+     dlim = stop - pos < dlim - dpos ? dpos + (size_t)(stop - pos) : dlim)
     rc.range = s->range;
     rc.code = s->code;
     if (!s->ieof && s->ie - s->ip < LZ_NEED) refill(s);
@@ -457,11 +460,13 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
     ifast = s->ib + s->ie - (s->ieof ? 0 : LZ_NEED);
     DLIM();
     /* A symbol may leave dpos anywhere up to dsize (a full window); the slow path at the start of
-     * the next one hands the output to wr. */
-    while (n) {
+     * the next one hands the output to wr. dlim is never past the last byte to decode, so the same
+     * test ends the loop, without a count of its own. */
+    for (;;) {
         unsigned ps, len;
         uint32_t d;
-        if (dpos >= dlim || rc.ip > ifast) { /* slow path: output, or fewer than LZ_NEED input bytes */
+        if (dpos >= dlim || rc.ip > ifast) { /* slow path: end, output, or fewer than LZ_NEED input bytes */
+            if (pos == stop) break;
             s->dpos = dpos;
             if (dpos == dsize) {
                 wrap(s);
@@ -491,7 +496,6 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
             dict[dpos++] = (uint8_t)sym;
             prev = sym;
             pos++;
-            n--;
             state = state < 4 ? 0 : state < 10 ? state - 3 : state - 6;
         } else {
             size_t from;
@@ -532,7 +536,6 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
                         prev = dict[dpos > rep0 ? dpos - rep0 - 1 : dpos + dsize - rep0 - 1];
                         dict[dpos++] = (uint8_t)prev;
                         pos++;
-                        n--;
                         continue;
                     }
                 } else {
@@ -554,11 +557,10 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
                 state = state < 7 ? 8 : 11;
             }
             len += 2;
-            if (rep0 >= pos || rep0 >= dsize || len > n) {
+            if (rep0 >= pos || rep0 >= dsize || len > stop - pos) {
                 r = SLZ_E_CORRUPT;
                 break;
             }
-            n -= len;
             pos += len;
             from = dpos > rep0 ? dpos - rep0 - 1 : dpos + dsize - rep0 - 1;
             if (len <= dsize - dpos && len <= dsize - from) { /* contiguous on both sides */
