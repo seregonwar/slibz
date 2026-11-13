@@ -31,6 +31,23 @@
 #define INF_INLINE static inline
 #define INF_NOINLINE
 #endif
+/* x86-64 GCC: 64-bit match lengths (no zero extensions next to the 64-bit cursors) and an
+ * indexed long-copy loop; with BMI2 enabled at compile time (e.g. an x86-64-v3 default) the extra
+ * bits are taken with bzhi, which GCC would otherwise build from a mask kept in a register
+ * (+4-8% on Intel). Clang already emits bzhi and arm64 is faster with 32-bit lengths and the
+ * pointer loop: elsewhere the code is unchanged. */
+#if defined(__x86_64__) && defined(__GNUC__) && !defined(__clang__)
+#define INF_X64 1
+typedef size_t inf_len;
+#else
+typedef unsigned inf_len;
+#endif
+#if defined(INF_X64) && defined(__BMI2__)
+#include <immintrin.h>
+#define BZHI(v, n) _bzhi_u64((v), (n))
+#else
+#define BZHI(v, n) ((v) & ((1ull << (uint8_t)(n)) - 1))
+#endif
 
 static const uint16_t lbase[29] = {3,  4,  5,  6,  7,  8,  9,  10, 11,  13,  15,  17,  19,  23, 27,
                                    31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
@@ -325,16 +342,25 @@ out:
 #define FAST_OUT (258 + 32 + 2)
 
 /* copy a match of len (3..258) bytes from distance d (1..op) ending inside the output margin */
-static inline void copy_match(uint8_t *o, size_t d, unsigned len) {
+static inline void copy_match(uint8_t *o, size_t d, inf_len len) {
     const uint8_t *m = o - d;
     uint8_t *end = o + len;
     if (d >= 16) {
+#ifdef INF_X64
+        size_t i = 0;
+        do {
+            memcpy(o + i, m + i, 16);
+            memcpy(o + i + 16, m + i + 16, 16);
+            i += 32;
+        } while (i < len); /* may overshoot <= 31 bytes */
+#else
         do {
             memcpy(o, m, 16);
             memcpy(o + 16, m + 16, 16);
             o += 32;
             m += 32;
         } while (o < end); /* may overshoot <= 31 bytes */
+#endif
     } else if (d >= 8) {
         do {
             memcpy(o, m, 8);
@@ -369,7 +395,8 @@ static inline void copy_match(uint8_t *o, size_t d, unsigned len) {
 INF_INLINE int codes(inf *s, const int direct) {
     uint8_t *ob = s->ob;
     uint64_t bb = s->bb, sv;
-    unsigned bn = s->bn, len;
+    unsigned bn = s->bn;
+    inf_len len;
     const uint8_t *p = s->p, *pe = s->e;
     size_t op = s->op, d;
     const size_t oe = direct ? s->oe : OBUF;
@@ -392,7 +419,7 @@ INF_INLINE int codes(inf *s, const int direct) {
 #define CONSUME(x) (bb >>= (x) & 63, bn -= (x)) /* fast loop: only (u8)bn is valid */
 #define REFILL()   (bb |= ld64(p) << (bn & 63), p += 7 - (bn >> 3 & 7), bn |= 56)
 #define CONSUMEX(x) (bb >>= (x) & 63, bn -= (x) & 63)
-#define EXTRA(x)   ((unsigned)((sv & ((1ull << (uint8_t)(x)) - 1)) >> ((x) >> 8 & 63)))
+#define EXTRA(x)   ((inf_len)(BZHI(sv, x) >> ((x) >> 8 & 63)))
     for (;;) {
         if (!direct && op > ol) {
             SAVE();
@@ -523,7 +550,7 @@ INF_INLINE int codes(inf *s, const int direct) {
         if (direct && oe - op < len + 31u) { /* no room for copy_match's overshoot: exact copy */
             uint8_t *o = ob + op;
             const uint8_t *m = o - d;
-            unsigned k;
+            inf_len k;
             if (len > oe - op) return SLZ_E_LIMIT;
             for (k = 0; k < len; k++)
                 o[k] = m[k];
