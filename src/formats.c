@@ -384,6 +384,7 @@ static int list_tar(slz_archive *a) {
 typedef struct {
     tgzl L;
     size_t got;
+    uint64_t pos; /* decompressed bytes already given to the tar lister */
     uint8_t peek[512];
     int mode;
 } tgzs; /* mode 0 peek, 1 list */
@@ -403,7 +404,8 @@ static int gz_wr(void *u, const uint8_t *p, size_t n) {
         s->got += k;
         return s->got == 512 ? SLZ_E_CANCEL : 0;
     }
-    r = tar_list_chunk(&s->L, p, n, 0, 0, &sk);
+    r = tar_list_chunk(&s->L, p, n, s->pos, 0, &sk);
+    s->pos += n;
     return r < 0 ? r : r == 1 ? SLZ_E_CANCEL : 0;
 }
 
