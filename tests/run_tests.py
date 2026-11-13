@@ -401,7 +401,7 @@ def main():
     try:
         src, arcdir = os.path.join(work, "src"), os.path.join(work, "arc")
         os.makedirs(arcdir)
-        files = make_corpus(src)
+        corpus = make_corpus(src)
         want = tree(src)
         arcs = pack_all(src, arcdir)
 
@@ -524,7 +524,7 @@ def main():
             check(not os.listdir(os.path.join(work, "outside")), "followed pre-existing symlink")
 
         # single entries into memory (slz_read / slz_read_mem), hostile archives above included
-        read_tests(work, arcdir, arcs, files)
+        read_tests(work, arcdir, arcs, corpus)
 
         # 4. fuzz: truncations and bit flips must never crash / escape
         rnd = random.Random(7)
