@@ -1,6 +1,6 @@
 {
- "commit": "4da826cb89c124e3eb157518b5c90ab37bc64774",
- "commit_time": "2026-11-13T17:10:01Z",
+ "commit": "038d60618148ed5f8dd161842d7e423b519af283",
+ "commit_time": "2026-11-13T20:46:17Z",
  "decode": {
   "best_of": {
    "deflate": "5 per process, 3 processes",
@@ -9,41 +9,41 @@
   "bytes": 211938580,
   "corpus": "Silesia",
   "deflate": {
-   "libdeflate": 1155.0,
-   "slz": 1024.0,
-   "zlib": 502.0,
-   "zlib-ng": 906.0
+   "libdeflate": 1102.0,
+   "slz": 967.0,
+   "zlib": 462.0,
+   "zlib-ng": 796.0
   },
   "files": 12,
   "lzma2": {
-   "slz": 152.0,
-   "xz": 151.0
+   "slz": 147.0,
+   "xz": 153.0
   },
   "rounds": {
    "deflate": [
     {
-     "libdeflate": 1149.0,
-     "slz": 1014.0,
-     "zlib": 500.0,
-     "zlib-ng": 904.0
+     "libdeflate": 1101.0,
+     "slz": 967.0,
+     "zlib": 462.0,
+     "zlib-ng": 796.0
     },
     {
-     "libdeflate": 1150.0,
-     "slz": 1016.0,
-     "zlib": 502.0,
-     "zlib-ng": 906.0
+     "libdeflate": 1102.0,
+     "slz": 965.0,
+     "zlib": 461.0,
+     "zlib-ng": 796.0
     },
     {
-     "libdeflate": 1155.0,
-     "slz": 1024.0,
-     "zlib": 502.0,
-     "zlib-ng": 906.0
+     "libdeflate": 1102.0,
+     "slz": 963.0,
+     "zlib": 461.0,
+     "zlib-ng": 796.0
     }
    ],
    "lzma2": [
     {
-     "slz": 152.0,
-     "xz": 151.0
+     "slz": 147.0,
+     "xz": 153.0
     }
    ]
   }
@@ -51,62 +51,62 @@
  "e2e": {
   "7z": {
    "silesia-nonsolid.7z": {
-    "7z l": 0.002337,
-    "7z x": 1.456141,
-    "bsdtar -x": 1.639993,
-    "slz list": 0.001123,
-    "slz x": 0.629098,
-    "slz x -j 1": 1.502066
+    "7z l": 0.002428,
+    "7z x": 1.569108,
+    "bsdtar -x": 1.583416,
+    "slz list": 0.001176,
+    "slz x": 0.697474,
+    "slz x -j 1": 1.589418
    },
    "silesia.7z": {
-    "7z l": 0.002601,
-    "7z x": 1.047747,
-    "bsdtar -x": 1.605066,
-    "slz list": 0.001269,
-    "slz x": 1.499076,
-    "slz x -j 1": 1.53364
+    "7z l": 0.002328,
+    "7z x": 1.062132,
+    "bsdtar -x": 1.527124,
+    "slz list": 0.00116,
+    "slz x": 1.039038,
+    "slz x -j 1": 1.551596
    }
   },
   "list": {
    "500k entries": {
-    "7z l": 3.604903,
-    "bsdtar -t": 2.386789,
-    "python zipfile": 1.79847,
-    "slz": 0.076035,
-    "unzip -Z1": 0.450699
+    "7z l": 4.051023,
+    "bsdtar -t": 2.80486,
+    "python zipfile": 1.95906,
+    "slz": 0.096566,
+    "unzip -Z1": 0.853276
    },
    "silesia.zip": {
-    "7z l": 0.002377,
-    "bsdtar -t": 0.001434,
-    "python zipfile": 0.022937,
-    "slz": 0.001064,
-    "unzip -Z1": 0.001677
+    "7z l": 0.002371,
+    "bsdtar -t": 0.001539,
+    "python zipfile": 0.025451,
+    "slz": 0.001142,
+    "unzip -Z1": 0.001673
    }
   },
   "runs": 3,
   "targz": {
    "silesia.tar.gz": {
-    "GNU tar -xzf": 0.963522,
-    "bsdtar": 0.34047,
-    "pigz -d | tar -x": 0.362568,
-    "slz": 0.280246
+    "GNU tar -xzf": 1.070744,
+    "bsdtar": 0.378147,
+    "pigz -d | tar -x": 0.423142,
+    "slz": 0.268708
    }
   },
   "threads": 4,
   "zip": {
    "silesia.zip": {
-    "7z x": 0.727778,
-    "bsdtar": 0.308152,
-    "python zipfile": 0.60693,
-    "slz": 0.7557,
-    "slz -j 1": 0.776127,
-    "unzip": 1.047601
+    "7z x": 0.818481,
+    "bsdtar": 0.344747,
+    "python zipfile": 0.69248,
+    "slz": 0.094967,
+    "slz -j 1": 0.26223,
+    "unzip": 1.149133
    }
   }
  },
  "env": {
   "cc": "gcc 13.3.0",
-  "cpu": "AMD EPYC 9V45 96-Core Processor",
+  "cpu": "AMD EPYC 9V74 80-Core Processor",
   "image": "ubuntu24 20261111.370.1",
   "kernel": "7.0.0-1017-azure",
   "os": "Ubuntu 24.04.5 LTS",
@@ -114,20 +114,20 @@
   "threads": 4
  },
  "event": "push",
- "measured_at": "2026-11-13T17:13:48Z",
+ "measured_at": "2026-11-13T20:49:55Z",
  "ref": "refs/heads/main",
  "repository": "seregonwar/slibz",
  "run_attempt": "1",
- "run_id": "43470064535",
- "run_url": "https://github.com/seregonwar/slibz/actions/runs/43470064535",
+ "run_id": "43504613608",
+ "run_url": "https://github.com/seregonwar/slibz/actions/runs/43504613608",
  "schema": 1,
- "subject": "lzma: x86-64: direct bits in one asm loop, as xz",
+ "subject": "7z: decode the independent LZMA2 segments of a solid folder in parallel",
  "timing": {
-  "build": 3.2,
-  "deflate": 33.5,
-  "e2e": 78.8,
-  "lzma2": 96.9,
-  "total": 213.5
+  "build": 4.2,
+  "deflate": 38.7,
+  "e2e": 79.1,
+  "lzma2": 84.0,
+  "total": 207.1
  },
  "versions": {
   "7-Zip": "7-Zip (z) 26.06 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-11-06",
