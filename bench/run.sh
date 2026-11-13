@@ -112,7 +112,7 @@ bench() {
     local cc=$1
     shift
     local flags="$*" tag o pre=$PWD/deps/$cc n p bad names
-    names=$(cat v/order)
+    names=${ONLY:-$(cat v/order)} # ONLY: a subset of the variants
     tag=$(echo "$cc $flags" | tr -s ' ' '_')
     o=$(objdir "$cc" "$flags")
     rm -rf "$o" && mkdir -p "$o"
