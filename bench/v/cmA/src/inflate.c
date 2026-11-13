@@ -126,10 +126,11 @@ static inline int bits(inf *s, unsigned n, unsigned *v) {
 
 /* Decode table entry (32 bits):
  *   bits 0-5   bits to consume: codeword length + extra bits (subtable pointer: primary bits);
- *              bits 6-7 are 0, so (uint8_t)entry is a shift count without masking
+ *              bits 6-7 are 0
  *   bits 8-11  codeword length (subtable pointer: subtable index bits); the extra bits of a
- *              length or distance are (bits & mask(bits 0-5)) >> (bits 8-11), and bits 12-15
- *              are 0 in those entries, so (uint8_t)(entry >> 8) is the codeword length
+ *              length or distance are (bits & mask(bits 0-5)) >> (bits 8-11). Bits 12-15 are 0
+ *              in those entries, so EXTRA masks with the low byte (what x86 bzhi reads) and
+ *              shifts by entry >> 8 & 63 (what shift instructions read), with no extra masking
  *   bit 13 EOB, bit 14 SUB (subtable pointer), bit 15 EXC (EOB, SUB, or invalid code)
  *   bits 16-30 value: literal byte, length / distance base, code-length symbol, subtable offset
  *   bit 31 LIT (literal)
@@ -319,13 +320,18 @@ out:
 static inline void copy_match(uint8_t *o, size_t d, unsigned len) {
     const uint8_t *m = o - d;
     uint8_t *end = o + len;
-    if (d >= 16) {
+    if (d >= 32) {
         do {
-            memcpy(o, m, 16);
-            memcpy(o + 16, m + 16, 16);
+            memcpy(o, m, 32); /* no overlap: both halves load before they store */
             o += 32;
             m += 32;
         } while (o < end); /* may overshoot <= 31 bytes */
+    } else if (d >= 16) {
+        do {
+            memcpy(o, m, 16);
+            o += 16;
+            m += 16;
+        } while (o < end);
     } else if (d >= 8) {
         do {
             memcpy(o, m, 8);
@@ -363,14 +369,18 @@ INF_INLINE int codes(inf *s) {
     size_t op = s->op, d;
     uint32_t e;
     int r;
+    const uint32_t *dt = s->dt;
 #define SAVE()     (s->bb = bb, s->bn = bn, s->p = p, s->op = op)
 #define LOAD()     (bb = s->bb, bn = s->bn, p = s->p, pe = s->e, op = s->op)
-/* (uint8_t) shift counts instead of & 63: x86 shrx / arm64 lsr take the count unmasked, and
- * bzhi (BMI2 mask) uses exactly the low byte */
-#define CONSUME(x) (bb >>= (uint8_t)(x), bn -= (x)) /* fast loop: only (u8)bn is valid */
+#define CONSUME(x) (bb >>= (x) & 63, bn -= (x)) /* fast loop: only (u8)bn is valid */
 #define REFILL()   (bb |= ld64(p) << (bn & 63), p += 7 - (bn >> 3 & 7), bn |= 56)
 #define CONSUMEX(x) (bb >>= (x) & 63, bn -= (x) & 63)
-#define EXTRA(x)   ((unsigned)((sv & ((1ull << (uint8_t)(x)) - 1)) >> (uint8_t)((x) >> 8)))
+#define EXTRA(x)   ((unsigned)((sv & ((1ull << (uint8_t)(x)) - 1)) >> ((x) >> 8 & 63)))
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__aarch64__)
+    /* opaque copy: keeps the distance table base in a register (its offset from s is beyond
+     * the arm64 load immediate range, so it would otherwise be added on every lookup) */
+    __asm__("" : "+r"(dt));
+#endif
     for (;;) {
         if (op > OBUF - FAST_OUT) {
             SAVE();
@@ -386,8 +396,9 @@ INF_INLINE int codes(inf *s) {
             /* Fast loop. Invariant at the top: (u8)bn >= 56 and e = primary entry for bb.
              * Upper bits of bn are garbage: whole entries are subtracted and only the low 8
              * bits count. Bit budget per refill: 2 literals (<= 22) + a length (<= 20, with
-             * subtable) leave >= 14 bits to preload the distance entry; the distance
-             * (<= 28) refills first if needed so >= 11 bits remain for the next lookup. */
+             * subtable) leave >= 14 bits to preload the distance entry; before the distance
+             * (<= 8 + 13 bits from the primary table, <= 28 with a subtable) the loop refills
+             * if needed so >= 11 bits remain for the next lookup. */
             const uint8_t *pf = pe - FAST_IN;
             const size_t of = OBUF - FAST_OUT;
             REFILL();
@@ -442,14 +453,14 @@ INF_INLINE int codes(inf *s) {
                     }
                 }
                 len = (e >> 16) + EXTRA(e);
-                e = s->dt[bb & DTM];
+                e = dt[bb & DTM];
                 if (UNLIKELY(e & EXC)) {
                     if ((uint8_t)bn < 28 + LT_BITS) REFILL();
                     if (!(e & SUB)) return SLZ_E_CORRUPT;
                     CONSUME(e);
-                    e = s->dt[(e >> 16) + ((unsigned)bb & ((1u << (e >> 8 & 15)) - 1))];
+                    e = dt[(e >> 16) + ((unsigned)bb & ((1u << (e >> 8 & 15)) - 1))];
                     if (e & EXC) return SLZ_E_CORRUPT;
-                } else if ((uint8_t)bn < 21 + LT_BITS) { /* primary-table distance: <= 8 + 13 bits */
+                } else if ((uint8_t)bn < DT_BITS + 13 + LT_BITS) { /* primary-table distance */
                     REFILL();
                 }
                 sv = bb;
@@ -487,10 +498,10 @@ INF_INLINE int codes(inf *s) {
             return SLZ_E_CORRUPT;
         }
         len = (e >> 16) + EXTRA(e);
-        e = s->dt[bb & DTM];
+        e = dt[bb & DTM];
         if (e & SUB) {
             CONSUMEX(e);
-            e = s->dt[(e >> 16) + ((unsigned)bb & ((1u << (e >> 8 & 15)) - 1))];
+            e = dt[(e >> 16) + ((unsigned)bb & ((1u << (e >> 8 & 15)) - 1))];
         }
         if (e & EXC) return SLZ_E_CORRUPT;
         sv = bb;
