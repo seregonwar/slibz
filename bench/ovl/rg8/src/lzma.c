@@ -661,7 +661,7 @@ static size_t bcj_x86(bcj *f, uint8_t *buf, size_t size) {
 
 int bcj_wr(void *u, const uint8_t *p, size_t n) {
     bcj *f = (bcj *)u;
-    while (pos < pend) {
+    while (n) {
         size_t k = MIN(n, sizeof f->buf - f->n), done;
         int r;
         memcpy(f->buf + f->n, p, k);
