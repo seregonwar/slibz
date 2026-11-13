@@ -222,10 +222,14 @@ static int build(uint32_t *t, const uint8_t *len, unsigned n, int kind, unsigned
 }
 #undef REV
 
+/* The decoder hands output to wr every FLUSH bytes, while it is still in cache, and slides the
+ * window back to the start of ob only when less than FLUSH bytes of room are left. */
+#define FLUSH (1024u << 10)
+
 int inf_flush(inf *s) {
     int r = s->op > s->of ? s->wr(s->wu, s->ob + s->of, s->op - s->of) : 0;
     if (r) return r;
-    if (s->op > WIN) {
+    if (s->op > OBUF - FLUSH) {
         memmove(s->ob, s->ob + s->op - WIN, WIN);
         s->obase += s->op - WIN;
         s->op = WIN;
@@ -362,26 +366,28 @@ INF_INLINE int codes(inf *s) {
     unsigned bn = s->bn, len;
     const uint8_t *p = s->p, *pe = s->e;
     size_t op = s->op, d;
+    size_t ol = s->of + FLUSH - FAST_OUT; /* flush past this (s->of <= OBUF - FLUSH) */
     uint32_t e;
     int r;
 #if (defined(__GNUC__) || defined(__clang__)) && defined(__aarch64__)
+    /* opaque copy: keeps the distance table base in a register (its offset from s is beyond
+     * the arm64 load immediate range, so it would otherwise be added on every lookup) */
     const uint32_t *dt = s->dt;
+    __asm__("" : "+r"(dt));
+#define DT(i) dt[i]
 #else
-#define dt s->dt
+    /* x86 and others: index the table from s (base + index * 4 + offset); with a local copy of
+     * the pointer gcc runs out of registers and reloads it from the stack on every lookup */
+#define DT(i) s->dt[i]
 #endif
 #define SAVE()     (s->bb = bb, s->bn = bn, s->p = p, s->op = op)
-#define LOAD()     (bb = s->bb, bn = s->bn, p = s->p, pe = s->e, op = s->op)
+#define LOAD()     (bb = s->bb, bn = s->bn, p = s->p, pe = s->e, op = s->op, ol = s->of + FLUSH - FAST_OUT)
 #define CONSUME(x) (bb >>= (x) & 63, bn -= (x)) /* fast loop: only (u8)bn is valid */
 #define REFILL()   (bb |= ld64(p) << (bn & 63), p += 7 - (bn >> 3 & 7), bn |= 56)
 #define CONSUMEX(x) (bb >>= (x) & 63, bn -= (x) & 63)
 #define EXTRA(x)   ((unsigned)((sv & ((1ull << (uint8_t)(x)) - 1)) >> ((x) >> 8 & 63)))
-#if (defined(__GNUC__) || defined(__clang__)) && defined(__aarch64__)
-    /* opaque copy: keeps the distance table base in a register (its offset from s is beyond
-     * the arm64 load immediate range, so it would otherwise be added on every lookup) */
-    __asm__("" : "+r"(dt));
-#endif
     for (;;) {
-        if (op > OBUF - FAST_OUT) {
+        if (op > ol) {
             SAVE();
             if ((r = inf_flush(s))) return r;
             LOAD();
@@ -399,7 +405,6 @@ INF_INLINE int codes(inf *s) {
              * (<= 8 + 13 bits from the primary table, <= 28 with a subtable) the loop refills
              * if needed so >= 11 bits remain for the next lookup. */
             const uint8_t *pf = pe - FAST_IN;
-            const size_t of = OBUF - FAST_OUT;
             REFILL();
             e = s->lt[bb & LTM];
             do {
@@ -452,12 +457,12 @@ INF_INLINE int codes(inf *s) {
                     }
                 }
                 len = (e >> 16) + EXTRA(e);
-                e = dt[bb & DTM];
+                e = DT(bb & DTM);
                 if (UNLIKELY(e & EXC)) {
                     if ((uint8_t)bn < 28 + LT_BITS) REFILL();
                     if (!(e & SUB)) return SLZ_E_CORRUPT;
                     CONSUME(e);
-                    e = dt[(e >> 16) + ((unsigned)bb & ((1u << (e >> 8 & 15)) - 1))];
+                    e = DT((e >> 16) + ((unsigned)bb & ((1u << (e >> 8 & 15)) - 1)));
                     if (e & EXC) return SLZ_E_CORRUPT;
                 } else if ((uint8_t)bn < DT_BITS + 13 + LT_BITS) { /* primary-table distance */
                     REFILL();
@@ -470,7 +475,7 @@ INF_INLINE int codes(inf *s) {
                 REFILL();
                 copy_match(ob + op, d, len);
                 op += len;
-            } while (p <= pf && op <= of);
+            } while (p <= pf && op <= ol);
             bn &= 255;
             continue;
         }
@@ -497,10 +502,10 @@ INF_INLINE int codes(inf *s) {
             return SLZ_E_CORRUPT;
         }
         len = (e >> 16) + EXTRA(e);
-        e = dt[bb & DTM];
+        e = DT(bb & DTM);
         if (e & SUB) {
             CONSUMEX(e);
-            e = dt[(e >> 16) + ((unsigned)bb & ((1u << (e >> 8 & 15)) - 1))];
+            e = DT((e >> 16) + ((unsigned)bb & ((1u << (e >> 8 & 15)) - 1)));
         }
         if (e & EXC) return SLZ_E_CORRUPT;
         sv = bb;
@@ -518,7 +523,7 @@ INF_INLINE int codes(inf *s) {
 #undef CONSUMEX
 #undef REFILL
 #undef EXTRA
-#undef dt
+#undef DT
 }
 
 static INF_NOINLINE int codes_generic(inf *s) {
