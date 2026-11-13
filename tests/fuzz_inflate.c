@@ -9,7 +9,10 @@
  *    so far) recorded through the ck hook; decoding restarted from a random one with inf_reset
  *    (byte offset, skip bits, last 32 KiB of output as history) must produce the rest exactly.
  * 3. the same streams mutated (bit flips, truncation, splices) -> no crash; whenever zlib accepts,
- *    slz must accept with identical output. */
+ *    slz must accept with identical output.
+ * 4. slz_inflate (in memory, zero-copy) on every stream: exact-size input and output buffers, with
+ *    output slack and trailing input, one byte short (-> SLZ_E_LIMIT); on mutated streams it must
+ *    agree with the streaming decoder. */
 #include "internal.h"
 #include <stdio.h>
 #include <zlib.h>
@@ -109,8 +112,8 @@ static int slz_resume(inf *z, const uint8_t *c, size_t cn, uint64_t bit, const u
     return r;
 }
 
-static int slz_inflate(inf *z, const uint8_t *c, size_t cn, uint8_t *out, size_t cap, size_t *on,
-                       size_t maxchunk, uint64_t *end) {
+static int slz_stream(inf *z, const uint8_t *c, size_t cn, uint8_t *out, size_t cap, size_t *on,
+                      size_t maxchunk, uint64_t *end) {
     io s;
     int r;
     s.in = c;
@@ -155,10 +158,10 @@ static int zlib_inflate(const uint8_t *c, size_t cn, uint8_t *out, size_t cap, s
 }
 
 int main(int argc, char **argv) {
-    long it = argc > 1 ? atol(argv[1]) : 1000, i, lenient = 0, mut_ok = 0, resumed = 0;
+    long it = argc > 1 ? atol(argv[1]) : 1000, i, lenient = 0, mut_ok = 0, resumed = 0, direct = 0;
     size_t MAXN = 3u << 20, CAP = 8u << 20;
     uint8_t *d = (uint8_t *)malloc(MAXN), *c = (uint8_t *)malloc(CAP), *o1 = (uint8_t *)malloc(CAP),
-            *o2 = (uint8_t *)malloc(CAP);
+            *o2 = (uint8_t *)malloc(CAP), *o3 = (uint8_t *)malloc(CAP);
     inf *z = inf_new();
     rs = argc > 2 ? (uint64_t)atoll(argv[2]) : 0x9e3779b97f4a7c15ull;
     for (i = 0; i < it; i++) {
@@ -184,11 +187,36 @@ int main(int argc, char **argv) {
         cn = zs.total_out;
         deflateEnd(&zs);
         mc = rnd() % 3 == 0 ? 0 : 1 + rnd() % (rnd() % 2 ? 16 : 70000);
-        r = slz_inflate(z, c, cn, o1, CAP, &on1, mc, &end);
+        r = slz_stream(z, c, cn, o1, CAP, &on1, mc, &end);
         if (r || on1 != n || memcmp(o1, d, n) || end != cn) {
             fprintf(stderr, "MISMATCH iter %ld: r=%d n=%zu got=%zu end=%llu cn=%zu chunk=%zu\n", i, r, n, on1,
                     (unsigned long long)end, cn, mc);
             return 1;
+        }
+        { /* in-memory decode: exact-size input and output buffers (sanitizers catch any access past
+           * either), then with slack, then one byte short */
+            uint8_t *ci = (uint8_t *)malloc(cn + !cn), *ob = (uint8_t *)malloc(n + !n);
+            size_t used, got, slack = drnd() % 64;
+            memcpy(ci, c, cn);
+            r = slz_inflate(ci, cn, ob, n, &used, &got);
+            if (r || got != n || used != cn || memcmp(ob, d, n)) {
+                fprintf(stderr, "DIRECT MISMATCH iter %ld: r=%d n=%zu got=%zu used=%zu cn=%zu\n", i, r, n, got,
+                        used, cn);
+                return 1;
+            }
+            r = slz_inflate(c, cn + (drnd() % 2) * 16, o2, n + slack, &used, &got); /* + trailing bytes */
+            if (r || got != n || used != cn || memcmp(o2, d, n)) {
+                fprintf(stderr, "DIRECT SLACK MISMATCH iter %ld: r=%d n=%zu got=%zu used=%zu slack=%zu\n", i, r,
+                        n, got, used, slack);
+                return 1;
+            }
+            if (n && (r = slz_inflate(ci, cn, ob, n - 1, &used, &got)) != SLZ_E_LIMIT) {
+                fprintf(stderr, "DIRECT LIMIT iter %ld: r=%d n=%zu\n", i, r, n);
+                return 1;
+            }
+            free(ci);
+            free(ob);
+            direct++;
         }
         if (nck) { /* resume from a random block boundary */
             unsigned k = rnd() % nck;
@@ -215,11 +243,30 @@ int main(int argc, char **argv) {
             for (k = 0; k < flips && mn; k++)
                 mbuf[rnd() % mn] ^= (uint8_t)(1u << (rnd() % 8));
             rz = zlib_inflate(mbuf, mn, x, CAP, &on2);
-            rl = slz_inflate(z, mbuf, mn, o1, CAP, &on1, mc, &end);
+            rl = slz_stream(z, mbuf, mn, o1, CAP, &on1, mc, &end);
             if (rz == 0 && (rl != 0 || on1 != on2 || memcmp(o1, x, on1))) {
                 fprintf(stderr, "DIFF iter %ld mut %d: zlib ok (%zu bytes) slz r=%d (%zu bytes)\n", i, m, on2,
                         rl, on1);
                 return 1;
+            }
+            { /* in-memory decode of the exact-size mutated input must agree with the streaming one
+               * (the error may differ only when one of them ran out of output space first) */
+                uint8_t *ci = (uint8_t *)malloc(mn + !mn);
+                size_t used, got;
+                int rd2;
+                memcpy(ci, mbuf, mn);
+                rd2 = slz_inflate(ci, mn, o3, CAP, &used, &got);
+                if ((rd2 == 0) != (rl == 0) || (!rl && (got != on1 || used != end || memcmp(o3, o1, got))) ||
+                    (rl && rd2 != rl && rl != SLZ_E_LIMIT && rd2 != SLZ_E_LIMIT)) {
+                    fprintf(stderr, "DIRECT DIFF iter %ld mut %d: stream r=%d (%zu bytes) direct r=%d (%zu bytes)\n",
+                            i, m, rl, on1, rd2, got);
+                    return 1;
+                }
+                if (!rl && (rd2 = slz_inflate(ci, mn, o3, on1, &used, &got)) != 0) {
+                    fprintf(stderr, "DIRECT EXACT iter %ld mut %d: r=%d (%zu bytes)\n", i, m, rd2, on1);
+                    return 1;
+                }
+                free(ci);
             }
             if (rz && !rl && lenient++ < 3 && getenv("FUZZ_VERBOSE"))
                 fprintf(stderr,
@@ -230,13 +277,14 @@ int main(int argc, char **argv) {
             if (!rz) mut_ok++;
         }
     }
-    printf("fuzz_inflate: %ld streams ok (%ld resumed from a checkpoint), %ld mutated streams valid for both, "
-           "%ld accepted only by slz\n",
-           it, resumed, mut_ok, lenient);
+    printf("fuzz_inflate: %ld streams ok (%ld resumed from a checkpoint, %ld also in memory), %ld mutated "
+           "streams valid for both, %ld accepted only by slz\n",
+           it, resumed, direct, mut_ok, lenient);
     free(d);
     free(c);
     free(o1);
     free(o2);
+    free(o3);
     free(z);
     return 0;
 }

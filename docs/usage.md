@@ -43,3 +43,26 @@ slz_close(a);
 
 In-place mode is described in [In-place (destructive) extraction](in-place-extraction.md), building and
 linking in [Building and integration](building.md).
+
+### In-memory DEFLATE (zero-copy)
+
+`slz_inflate` decodes a raw DEFLATE stream (RFC 1951, no zlib or gzip wrapper) from one buffer
+straight into another: the input is read in place and the output is written once, directly into
+the caller's buffer, with no intermediate window or copy. It is the fastest way to inflate when
+the uncompressed size is known (a zip entry's `usize`, a gzip trailer's ISIZE) or bounded.
+
+```c
+size_t used, got;
+int r = slz_inflate(comp, comp_len, buf, buf_cap, &used, &got);
+if (r == SLZ_E_LIMIT) { /* buf_cap too small: retry with a larger buffer */ }
+else if (r) { fprintf(stderr, "%s\n", slz_strerror(r)); return 1; }
+/* buf[0, got) = the data; comp[used, comp_len) = whatever follows the stream (e.g. a gzip trailer) */
+```
+
+- Returns 0, `SLZ_E_CORRUPT` (invalid or truncated stream), `SLZ_E_LIMIT` (the output does not fit
+  in `out_cap`) or `SLZ_E_NOMEM`. `in_used` and `out_len` may be `NULL`; both are 0 on error.
+- `out[*out_len, out_cap)` may be overwritten (the decoder copies matches in whole words), and so
+  may all of `out` on error. Giving a few dozen bytes of slack beyond the exact size keeps the
+  fast path running to the very end, but is not required.
+- Thread-safe, no global state; each call allocates ~43 KiB of decode tables.
+- Acceptance rules are identical to the streaming decoder used by `slz_extract` (and to zlib's).

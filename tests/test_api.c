@@ -1,7 +1,7 @@
 /* API-level tests that need library internals or interruption control.
  * Copyright (c) 2026 Seregon. SPDX-License-Identifier: MIT
  *
- *   slz-test unit                          sanitizer + tree listing unit tests
+ *   slz-test unit                          sanitizer, tree listing, journal and in-memory inflate unit tests
  *   slz-test resume <archive> <dest> <KiB> [checkpoint_KiB] destructive extraction, cancelled every <KiB> of
  *                                          output and resumed until done (simulated crashes);
  *                                          prints the peak on-disk size of the archive. */
@@ -196,11 +196,196 @@ static void test_journal(void) {
 #endif
 }
 
+/* in-memory inflate (slz_inflate) against the streaming decoder, on streams from a tiny encoder:
+ * fixed-Huffman blocks with greedy matches (distances cross block boundaries) and stored blocks */
+typedef struct {
+    uint8_t *b;
+    size_t n;
+    uint64_t acc;
+    unsigned an;
+} bitw;
+static void put(bitw *w, unsigned v, unsigned n) { /* LSB first */
+    w->acc |= (uint64_t)v << w->an;
+    w->an += n;
+    while (w->an >= 8) {
+        w->b[w->n++] = (uint8_t)w->acc;
+        w->acc >>= 8;
+        w->an -= 8;
+    }
+}
+static void put_code(bitw *w, unsigned code, unsigned n) { /* Huffman codes go MSB first */
+    unsigned r = 0, i;
+    for (i = 0; i < n; i++)
+        r |= ((code >> i) & 1) << (n - 1 - i);
+    put(w, r, n);
+}
+static void put_sym(bitw *w, unsigned s) { /* fixed literal/length code (RFC 1951 3.2.6) */
+    if (s < 144)
+        put_code(w, 0x30 + s, 8);
+    else if (s < 256)
+        put_code(w, 0x190 + s - 144, 9);
+    else if (s < 280)
+        put_code(w, s - 256, 7);
+    else
+        put_code(w, 0xc0 + s - 280, 8);
+}
+static void put_match(bitw *w, unsigned len, unsigned d) {
+    static const unsigned short lb[29] = {3,  4,  5,  6,  7,  8,  9,  10, 11,  13,  15,  17,  19,  23, 27,
+                                          31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
+    static const unsigned char lx[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2,
+                                         2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
+    static const unsigned short db[30] = {1,    2,    3,    4,    5,    7,     9,     13,    17,  25,
+                                          33,   49,   65,   97,   129,  193,   257,   385,   513, 769,
+                                          1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
+    unsigned c = 28, k = 30;
+    while (lb[c] > len)
+        c--;
+    put_sym(w, 257 + c);
+    put(w, len - lb[c], lx[c]);
+    while (db[--k] > d)
+        ;
+    put_code(w, k, 5);
+    put(w, d - db[k], k < 4 ? 0 : k / 2 - 1);
+}
+static size_t mini_deflate(const uint8_t *in, size_t n, uint8_t *out) {
+    static int32_t head[1 << 15];
+    bitw w;
+    size_t i, blk = 0;
+    memset(&w, 0, sizeof w);
+    w.b = out;
+    for (i = 0; i < (1u << 15); i++)
+        head[i] = -1;
+    i = 0;
+    do {
+        size_t end = n - i > 65535 ? i + 65535 : n;
+        unsigned last = end == n;
+        if (blk++ % 3 == 2) { /* stored */
+            put(&w, last, 1);
+            put(&w, 0, 2);
+            if (w.an) put(&w, 0, 8 - w.an);
+            put(&w, (unsigned)(end - i), 16);
+            put(&w, ~(unsigned)(end - i) & 0xffff, 16);
+            memcpy(w.b + w.n, in + i, end - i);
+            w.n += end - i;
+            i = end;
+            continue;
+        }
+        put(&w, last, 1);
+        put(&w, 1, 2);
+        while (i < end) {
+            unsigned len = 0;
+            if (end - i >= 3) {
+                unsigned h = (unsigned)((in[i] | in[i + 1] << 8 | in[i + 2] << 16) * 2654435761u) >> 17;
+                int32_t c = head[h];
+                if (c >= 0 && i - (size_t)c <= 32768)
+                    while (len < 258 && i + len < end && in[(size_t)c + len] == in[i + len])
+                        len++;
+                if (len >= 3) put_match(&w, len, (unsigned)(i - (size_t)c));
+                head[h] = (int32_t)i;
+            }
+            if (len >= 3)
+                i += len;
+            else
+                put_sym(&w, in[i++]);
+        }
+        put_sym(&w, 256);
+    } while (i < n);
+    if (w.an) put(&w, 0, 8 - w.an);
+    return w.n;
+}
+
+typedef struct {
+    const uint8_t *in;
+    size_t n, pos;
+    uint8_t *out;
+    size_t on, cap;
+} memio;
+static int64_t mem_rd(void *u, uint8_t *b, size_t n) {
+    memio *m = (memio *)u;
+    size_t k = MIN(n, m->n - m->pos);
+    memcpy(b, m->in + m->pos, k);
+    m->pos += k;
+    return (int64_t)k;
+}
+static int mem_wr(void *u, const uint8_t *p, size_t n) {
+    memio *m = (memio *)u;
+    if (n > m->cap - m->on) return SLZ_E_LIMIT;
+    memcpy(m->out + m->on, p, n);
+    m->on += n;
+    return 0;
+}
+static int stream_inflate(const uint8_t *c, size_t cn, uint8_t *o, size_t cap, size_t *on) {
+    memio m;
+    int r;
+    inf *s = inf_new();
+    if (!s) return SLZ_E_NOMEM;
+    memset(&m, 0, sizeof m);
+    m.in = c;
+    m.n = cn;
+    m.out = o;
+    m.cap = cap;
+    inf_reset(s, 0, 0, NULL, 0, 0);
+    s->rd = mem_rd;
+    s->wr = mem_wr;
+    s->ck = NULL;
+    s->ru = s->wu = &m;
+    r = inf_run(s);
+    *on = m.on;
+    free(s);
+    return r;
+}
+
+static void test_inflate(void) {
+    static const size_t sizes[] = {0, 1, 7, 300, 70000, (5u << 20) + 123}; /* the last > OBUF */
+    uint32_t x = 12345;
+    unsigned si, pat;
+    size_t used, got;
+    CHECK(slz_inflate("\x03\x00", 2, NULL, 0, &used, &got) == 0 && used == 2 && got == 0);
+    CHECK(slz_inflate(NULL, 0, NULL, 0, &used, &got) == SLZ_E_CORRUPT);
+    CHECK(slz_inflate("\x01\x01\x00\xfe\xff\x41", 6, NULL, 0, NULL, NULL) == SLZ_E_LIMIT);
+    for (si = 0; si < sizeof sizes / sizeof *sizes; si++)
+        for (pat = 0; pat < 4; pat++) {
+            size_t n = sizes[si], cn, i;
+            uint8_t *d = (uint8_t *)malloc(n + 1), *c = (uint8_t *)malloc(n + n / 4 + 1024),
+                    *o = (uint8_t *)malloc(n + 1), *t;
+            int r;
+            if (!d || !c || !o) {
+                CHECK(!"out of memory");
+                free(d), free(c), free(o);
+                return;
+            }
+            for (i = 0; i < n; i++) { /* zeros, 8-letter text, random, then all three in 4 KiB runs */
+                unsigned m = pat == 3 ? (unsigned)(i >> 12) % 3 : pat;
+                x = x * 1103515245u + 12345u;
+                d[i] = m == 0 ? 0 : m == 1 ? (uint8_t)"abcdefgh"[x >> 29] : (uint8_t)(x >> 24);
+            }
+            cn = mini_deflate(d, n, c);
+            /* exact-size buffers (sanitizers catch any access past either end) */
+            t = (uint8_t *)malloc(cn);
+            if (t) {
+                memcpy(t, c, cn);
+                r = slz_inflate(t, cn, o, n, &used, &got);
+                CHECK(r == 0 && used == cn && got == n && !memcmp(o, d, n));
+                if (n) CHECK(slz_inflate(t, cn, o, n - 1, &used, &got) == SLZ_E_LIMIT);
+                CHECK(slz_inflate(t, cn - 1, o, n, &used, &got) != 0); /* truncated */
+                free(t);
+            }
+            memset(c + cn, 0xa5, 64); /* trailing data after the stream is left alone */
+            CHECK(slz_inflate(c, cn + 64, o, n + 1, &used, &got) == 0 && used == cn && got == n);
+            memset(o, 0, n);
+            CHECK(stream_inflate(c, cn, o, n, &got) == 0 && got == n && !memcmp(o, d, n));
+            free(d);
+            free(c);
+            free(o);
+        }
+}
+
 int main(int argc, char **argv) {
     if (argc >= 2 && !strcmp(argv[1], "unit")) {
         test_sanitize();
         test_tree();
         test_journal();
+        test_inflate();
         printf("%s\n", fails ? "unit: FAILED" : "unit: ok");
         return fails != 0;
     }
