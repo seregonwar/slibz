@@ -125,9 +125,12 @@ static inline int bits(inf *s, unsigned n, unsigned *v) {
 }
 
 /* Decode table entry (32 bits):
- *   bits 0-5   bits to consume: codeword length + extra bits (subtable pointer: primary bits)
+ *   bits 0-5   bits to consume: codeword length + extra bits (subtable pointer: primary bits);
+ *              bits 6-7 are 0
  *   bits 8-11  codeword length (subtable pointer: subtable index bits); the extra bits of a
- *              length or distance are (bits & mask(bits 0-5)) >> (bits 8-11)
+ *              length or distance are (bits & mask(bits 0-5)) >> (bits 8-11). Bits 12-15 are 0
+ *              in those entries, so EXTRA masks with the low byte (what x86 bzhi reads) and
+ *              shifts by entry >> 8 & 63 (what shift instructions read), with no extra masking
  *   bit 13 EOB, bit 14 SUB (subtable pointer), bit 15 EXC (EOB, SUB, or invalid code)
  *   bits 16-30 value: literal byte, length / distance base, code-length symbol, subtable offset
  *   bit 31 LIT (literal)
@@ -366,7 +369,7 @@ INF_INLINE int codes(inf *s) {
 #define CONSUME(x) (bb >>= (x) & 63, bn -= (x)) /* fast loop: only (u8)bn is valid */
 #define REFILL()   (bb |= ld64(p) << (bn & 63), p += 7 - (bn >> 3 & 7), bn |= 56)
 #define CONSUMEX(x) (bb >>= (x) & 63, bn -= (x) & 63)
-#define EXTRA(x)   ((unsigned)((sv & ((1ull << ((x) & 63)) - 1)) >> ((x) >> 8 & 15)))
+#define EXTRA(x)   ((unsigned)((sv & ((1ull << (uint8_t)(x)) - 1)) >> ((x) >> 8 & 63)))
     for (;;) {
         if (op > OBUF - FAST_OUT) {
             SAVE();
