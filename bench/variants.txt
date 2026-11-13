@@ -1,8 +1,8 @@
 # slz variants to compare: <name> <git ref> [overlay dir copied over the ref's src/ include/]
 # the first line is the baseline; names are C identifiers; no trailing comments
-base dd79b2be4e90055cfbca6c88a3fcc11c2fb3ce93
-t1 dd79b2be4e90055cfbca6c88a3fcc11c2fb3ce93 bench/ovl/t1
-t2 dd79b2be4e90055cfbca6c88a3fcc11c2fb3ce93 bench/ovl/t2
-t3 dd79b2be4e90055cfbca6c88a3fcc11c2fb3ce93 bench/ovl/t3
-f1 dd79b2be4e90055cfbca6c88a3fcc11c2fb3ce93 bench/ovl/f1
+base 276fe570e5cb9bbf6252245c7c9ead02633d0fb7
+d1 276fe570e5cb9bbf6252245c7c9ead02633d0fb7 bench/ovl/d1
+ng 276fe570e5cb9bbf6252245c7c9ead02633d0fb7 bench/ovl/ng
+n32 276fe570e5cb9bbf6252245c7c9ead02633d0fb7 bench/ovl/n32
+st 276fe570e5cb9bbf6252245c7c9ead02633d0fb7 bench/ovl/st
 main 0464858b09d82798e6bb976d38ff2def22d3a73f
