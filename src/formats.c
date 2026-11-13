@@ -927,6 +927,7 @@ const char *slz_strerror(int e) {
                               "limit exceeded",
                               "cancelled",
                               "archive is mid destructive extraction (resume with SLZ_DESTRUCTIVE)",
-                              "cannot open file"};
-    return (e <= 0 && e >= -13) ? m[-e] : "unknown error";
+                              "cannot open file",
+                              "invalid argument"};
+    return (e <= 0 && e >= -14) ? m[-e] : "unknown error";
 }

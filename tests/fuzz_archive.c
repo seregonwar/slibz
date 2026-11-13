@@ -5,9 +5,10 @@
  *
  * Each iteration mutates one seed archive (bit flips, byte sets, truncation, splices of another
  * seed, 32-bit "interesting" values at random offsets), then runs slz_open, the full listing,
- * slz_dir on every directory level, and slz_extract into <workdir>/out. Any memory error aborts
- * (sanitizers); afterwards the destination must contain no symlink and nothing may appear
- * outside it. */
+ * slz_dir on every directory level, slz_read_mem (into a buffer of exactly cap bytes) and
+ * slz_read (with max_total) on the first entries, and slz_extract into <workdir>/out. Any memory
+ * error aborts (sanitizers); a read must never deliver more than cap / max_total bytes; afterwards
+ * the destination must contain no symlink and nothing may appear outside it. */
 #define _DEFAULT_SOURCE
 #include "slz.h"
 #include <dirent.h>
@@ -31,6 +32,12 @@ static int walk_cb(void *u, const char *name, size_t len, int is_dir, long long 
     (void)len;
     (void)is_dir;
     (void)idx;
+    return 0;
+}
+
+static int count_cb(void *u, const void *p, size_t n) {
+    (void)p;
+    *(uint64_t *)u += n;
     return 0;
 }
 
@@ -150,6 +157,22 @@ int main(int argc, char **argv) {
                 if (i > 2000) break;
             }
             slz_dir(a, "", walk_cb, NULL);
+            for (i = 0; i < cnt && i < 16; i++) { /* single entries: never past cap or max_total */
+                size_t cap = rnd() % 2 ? rnd() % 4096 : rnd() % (1u << 20), got = 0;
+                uint8_t *mb = cap ? (uint8_t *)malloc(cap) : NULL; /* exactly cap: ASan sees any overflow */
+                uint64_t sunk = 0;
+                if (cap && !mb) continue;
+                slz_read_mem(a, i, mb, cap, &got);
+                free(mb);
+                memset(&o, 0, sizeof o);
+                o.max_total = 4u << 20;
+                slz_read(a, i, count_cb, &sunk, &o);
+                if (got > cap || sunk > o.max_total) {
+                    fprintf(stderr, "READ OVER LIMIT: entry %zu, %zu bytes of %zu, %llu streamed (iteration %ld)\n", i,
+                            got, cap, (unsigned long long)sunk, it);
+                    return 1;
+                }
+            }
             memset(&o, 0, sizeof o);
             o.threads = 1 + rnd() % 4;
             o.max_total = 64u << 20; /* bombs are fine to refuse */

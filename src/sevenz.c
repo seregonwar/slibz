@@ -385,7 +385,10 @@ int z7_supported(const folder7 *f) {
     return f->unsupported || method_of(&f->c[f->dec]) < 0 ? SLZ_E_METHOD : 0;
 }
 
-int z7_decode(os_fd fd, const folder7 *f, wr_fn wr, void *wu) {
+/* Decode the folder: exactly f->usize bytes to wr, unless wr stops it (non-zero). need = how many
+ * of them the caller wants: wr must stop once it has them, so the LZMA window only has to cover
+ * those, plus what the BCJ filter may still hold back. */
+int z7_decode(os_fd fd, const folder7 *f, uint64_t need, wr_fn wr, void *wu) {
     rng in;
     counted cnt;
     bcj *filt = NULL;
@@ -393,6 +396,7 @@ int z7_decode(os_fd fd, const folder7 *f, wr_fn wr, void *wu) {
     void *u = &cnt;
     int m = method_of(&f->c[f->dec]), r = z7_supported(f);
     if (r) return r;
+    if (need > f->usize) need = f->usize;
     in.fd = fd;
     in.pos = f->pack_off;
     in.end = f->pack_off + f->pack_size;
@@ -440,7 +444,8 @@ int z7_decode(os_fd fd, const folder7 *f, wr_fn wr, void *wu) {
             dict =
                 c->props[0] == 40 ? 0xffffffffu : (uint64_t)(2 | (c->props[0] & 1)) << (c->props[0] / 2 + 11);
         }
-        if (!(z = lzd_new(dict, f->usize)))
+        /* BCJ holds back < 64 KiB: once the window wraps, the sink has had more than need bytes */
+        if (!(z = lzd_new(dict, !f->filter ? need : f->usize - need > 65536 ? need + 65536 : f->usize)))
             r = SLZ_E_NOMEM;
         else {
             lzd_io(z, rng_read, &in, w, u);
@@ -713,7 +718,7 @@ int open_7z(slz_archive *a, const uint8_t *head, size_t hn) {
             r = SLZ_E_NOMEM;
             goto fail;
         }
-        if ((r = z7_decode(a->fd, &s.f[0], mem_wr, &m)) ||
+        if ((r = z7_decode(a->fd, &s.f[0], s.f[0].usize, mem_wr, &m)) ||
             (s.f[0].has_crc && slz_crc32(0, m.p, m.n) != s.f[0].crc)) {
             free(m.p);
             r = r ? r : SLZ_E_CORRUPT;

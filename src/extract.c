@@ -48,20 +48,27 @@ typedef struct {
     size_t k;
     uint64_t wpos, doff;
     uint32_t crc;
+    wr_fn put; /* slz_read: the caller's sink instead of the output file */
+    void *pu;
 } wk;
+
+/* n more bytes decoded: max_total, then progress */
+static int account(job *j, uint64_t n) {
+    int64_t t = os_add(&j->out, (int64_t)n);
+    if (j->o->max_total && (uint64_t)t > j->o->max_total) return SLZ_E_LIMIT;
+    if (j->o->progress && j->o->progress(j->o->user, (uint64_t)t, (uint64_t)j->total)) return SLZ_E_CANCEL;
+    return 0;
+}
 
 static int w_wr(void *u, const uint8_t *p, size_t n) {
     wk *w = (wk *)u;
     job *j = w->j;
-    int64_t t;
     int r;
     if (j->a->fmt != SLZ_GZ && w->e && n > w->e->usize - w->wpos)
         return SLZ_E_CORRUPT; /* larger than declared */
-    t = os_add(&j->out, (int64_t)n);
-    if (j->o->max_total && (uint64_t)t > j->o->max_total) return SLZ_E_LIMIT;
-    if (j->o->progress && j->o->progress(j->o->user, (uint64_t)t, (uint64_t)j->total)) return SLZ_E_CANCEL;
+    if ((r = account(j, n))) return r;
     if (j->a->fmt != SLZ_TAR && j->a->fmt != SLZ_TGZ) w->crc = slz_crc32(w->crc, p, n); /* tar: no checksum */
-    if ((r = os_pwrite(w->out, p, n, w->wpos))) return r;
+    if ((r = w->put ? w->put(w->pu, p, n) : os_pwrite(w->out, p, n, w->wpos))) return r;
     w->wpos += n;
     return 0;
 }
@@ -115,13 +122,19 @@ static int w_ck(void *u, inf *s) { /* called by inflate at every block boundary 
     return (r = inf_flush(s)) ? r : ckpt(w, inf_bitpos(s), 0);
 }
 
-/* Entry fully written: verify size and checksum, set mtime, then close it, or in destructive
- * mode keep it open until the next checkpoint makes it durable. */
+/* All of the entry's data went through w_wr: exact size (gzip: modulo 2^32, as its trailer keeps
+ * it) and checksum. */
+static int verify(const wk *w, const slz_entry *e, int check_crc) {
+    if ((w->j->a->fmt == SLZ_GZ ? (w->wpos & 0xffffffffu) : w->wpos) != e->usize) return SLZ_E_CORRUPT;
+    return check_crc && w->crc != e->crc ? SLZ_E_CORRUPT : 0;
+}
+
+/* Entry fully written: verify it, set mtime, then close it, or in destructive mode keep it open
+ * until the next checkpoint makes it durable. */
 static int finish(wk *w, const slz_entry *e, int check_crc) {
     job *j = w->j;
     int r;
-    if ((j->a->fmt == SLZ_GZ ? (w->wpos & 0xffffffffu) : w->wpos) != e->usize) return SLZ_E_CORRUPT;
-    if (check_crc && w->crc != e->crc) return SLZ_E_CORRUPT;
+    if ((r = verify(w, e, check_crc))) return r;
     if (!(j->o->flags & SLZ_NO_MTIME)) os_mtime(w->out, e->mtime);
     os_add(&j->files, 1);
     if (!j->destr) {
@@ -139,6 +152,62 @@ static int create_mode(const job *j) {
 }
 
 /* ---------- one zip / tar / gzip entry ---------- */
+
+/* Checks shared with slz_read: can the entry be decoded, and where do its compressed bytes start
+ * (*doff). lim = where the next entry starts, res = resume record (local header maybe punched). */
+static int entry_data(const wk *w, const slz_entry *e, uint64_t lim, const jrec *res, uint64_t *doff) {
+    *doff = res ? res->doff : e->off;
+    if (e->enc) return SLZ_E_ENCRYPTED;
+    if (e->method != SLZ_M_STORE && e->method != SLZ_M_DEFLATE && e->method != SLZ_M_LZMA)
+        return SLZ_E_METHOD;
+    if (e->method == SLZ_M_STORE && e->csize != e->usize) return SLZ_E_CORRUPT;
+    if (!res && w->j->a->fmt == SLZ_ZIP) {
+        uint8_t h[30];
+        if (e->off > lim || lim - e->off < 30 || os_pread(w->in, h, 30, e->off) != 30 ||
+            rd32(h) != 0x04034b50)
+            return SLZ_E_CORRUPT;
+        *doff = e->off + 30 + rd16(h + 26) + rd16(h + 28);
+    }
+    return *doff > lim || e->csize > lim - *doff ? SLZ_E_CORRUPT : 0; /* overlapping / out of bounds data */
+}
+
+/* Decode [w->src.pos, w->src.end) through w_wr. skip, hn: resume inside a DEFLATE stream (bits to
+ * skip, bytes of history in w->buf). */
+static int decode(wk *w, const slz_entry *e, unsigned skip, size_t hn) {
+    job *j = w->j;
+    int r;
+    if (e->method == SLZ_M_STORE) {
+        if (!w->buf && !(w->buf = (uint8_t *)malloc(CHUNK))) return SLZ_E_NOMEM;
+        while (w->src.pos < w->src.end) {
+            size_t c = (size_t)MIN((uint64_t)CHUNK, w->src.end - w->src.pos);
+            if (os_pread(w->in, w->buf, c, w->src.pos) != (int64_t)c) return SLZ_E_CORRUPT;
+            if ((r = w_wr(w, w->buf, c))) return r;
+            w->src.pos += c;
+            if (j->destr && w->src.pos - j->lastck >= j->every && (r = ckpt(w, w->src.pos * 8, 0))) return r;
+        }
+        return 0;
+    }
+    if (e->method == SLZ_M_LZMA) { /* zip LZMA: version(2) props size(2) props(5), then data */
+        uint8_t h[9];
+        lzd *z;
+        if (e->csize < 9 || os_pread(w->in, h, 9, w->src.pos) != 9 || rd16(h + 2) != 5) return SLZ_E_CORRUPT;
+        w->src.pos += 9;
+        if (!(z = lzd_new(rd32(h + 5), e->usize))) return SLZ_E_NOMEM;
+        lzd_io(z, rng_read, &w->src, w_wr, w);
+        r = lzd_lzma(z, h + 4, e->usize, 1);
+        lzd_free(z);
+        return r;
+    }
+    if (!w->z && !(w->z = inf_new())) return SLZ_E_NOMEM;
+    inf_reset(w->z, w->src.pos, skip, w->buf, hn, w->wpos);
+    w->z->rd = rng_read;
+    w->z->wr = w_wr;
+    w->z->ck = j->destr ? w_ck : NULL;
+    w->z->ru = &w->src;
+    w->z->wu = w;
+    return inf_run(w->z);
+}
+
 static int one(void *wv, size_t k, const jrec *res) {
     wk *w = (wk *)wv;
     job *j = w->j;
@@ -147,7 +216,7 @@ static int one(void *wv, size_t k, const jrec *res) {
     int r, n;
     unsigned skip = 0;
     size_t hn = 0;
-    uint64_t doff = e->off, lim = j->lim[k];
+    uint64_t doff;
     w->e = e;
     w->k = k;
     w->out = OS_BAD;
@@ -157,21 +226,8 @@ static int one(void *wv, size_t k, const jrec *res) {
     }
     if ((n = sanitize(e->name, e->nlen, nm, sizeof nm)) <= 0) return n;
     if (e->type == SLZ_DIR) return os_create(&w->dst, nm, OC_MKDIR, 0, NULL);
-    if (e->enc) return SLZ_E_ENCRYPTED;
-    if (e->method != SLZ_M_STORE && e->method != SLZ_M_DEFLATE && e->method != SLZ_M_LZMA)
-        return SLZ_E_METHOD;
-    if (e->method == SLZ_M_STORE && e->csize != e->usize) return SLZ_E_CORRUPT;
     if (res && !res->ooff && !res->bitpos) res = NULL; /* checkpoint at entry start: nothing to resume */
-    if (res)
-        doff = res->doff; /* local header may already be punched */
-    else if (j->a->fmt == SLZ_ZIP) {
-        uint8_t h[30];
-        if (e->off > lim || lim - e->off < 30 || os_pread(w->in, h, 30, e->off) != 30 ||
-            rd32(h) != 0x04034b50)
-            return SLZ_E_CORRUPT;
-        doff = e->off + 30 + rd16(h + 26) + rd16(h + 28);
-    }
-    if (doff > lim || e->csize > lim - doff) return SLZ_E_CORRUPT; /* overlapping / out of bounds data */
+    if ((r = entry_data(w, e, j->lim[k], res, &doff))) return r;
     r = os_create(&w->dst, nm, res ? OC_RESUME : create_mode(j), e->mode, &w->out);
     if (r) return r;
     w->doff = w->src.pos = doff;
@@ -191,35 +247,7 @@ static int one(void *wv, size_t k, const jrec *res) {
         }
         os_add(&j->out, (int64_t)w->wpos);
     }
-    if ((r = os_trunc(w->out, w->wpos))) return r;
-    if (e->method == 0) {
-        while (w->src.pos < w->src.end) {
-            size_t c = (size_t)MIN((uint64_t)CHUNK, w->src.end - w->src.pos);
-            if (os_pread(w->in, w->buf, c, w->src.pos) != (int64_t)c) return SLZ_E_CORRUPT;
-            if ((r = w_wr(w, w->buf, c))) return r;
-            w->src.pos += c;
-            if (j->destr && w->src.pos - j->lastck >= j->every && (r = ckpt(w, w->src.pos * 8, 0))) return r;
-        }
-    } else if (e->method == SLZ_M_LZMA) { /* zip LZMA: version(2) props size(2) props(5), then data */
-        uint8_t h[9];
-        lzd *z;
-        if (e->csize < 9 || os_pread(w->in, h, 9, w->src.pos) != 9 || rd16(h + 2) != 5) return SLZ_E_CORRUPT;
-        w->src.pos += 9;
-        if (!(z = lzd_new(rd32(h + 5), e->usize))) return SLZ_E_NOMEM;
-        lzd_io(z, rng_read, &w->src, w_wr, w);
-        r = lzd_lzma(z, h + 4, e->usize, 1);
-        lzd_free(z);
-        if (r) return r;
-    } else {
-        if (!w->z && !(w->z = inf_new())) return SLZ_E_NOMEM;
-        inf_reset(w->z, w->src.pos, skip, w->buf, hn, w->wpos);
-        w->z->rd = rng_read;
-        w->z->wr = w_wr;
-        w->z->ck = j->destr ? w_ck : NULL;
-        w->z->ru = &w->src;
-        w->z->wu = w;
-        if ((r = inf_run(w->z))) return r;
-    }
+    if ((r = os_trunc(w->out, w->wpos)) || (r = decode(w, e, skip, hn))) return r;
     if ((r = finish(w, e, j->a->fmt != SLZ_TAR))) return r; /* tar has no checksum */
     return j->destr && w->src.end - j->lastck >= j->every ? ckpt(w, w->src.end * 8, 1) : 0;
 }
@@ -306,7 +334,7 @@ static int one7(void *wv, size_t k, const jrec *res) {
     w->src.end = f->pack_off + f->pack_size;
     if (!f->nsub) return 0;
     if ((r = z7_supported(f))) return r; /* before creating any file */
-    if ((r = split_next(&s)) || (r = z7_decode(w->in, f, split_wr, &s))) return r;
+    if ((r = split_next(&s)) || (r = z7_decode(w->in, f, f->usize, split_wr, &s))) return r;
     if (s.left || w->e || s.k != f->nsub || (f->has_crc && s.fcrc != f->crc)) return SLZ_E_CORRUPT;
     return j->destr && w->src.end - j->lastck >= j->every ? ckpt(w, w->src.end * 8, 1) : 0;
 }
@@ -598,5 +626,215 @@ int slz_extract(slz_archive *a, const char *dest, slz_opts *opts) {
 out:
     free(j.ord);
     free(j.lim);
+    return r;
+}
+
+/* ---------- slz_read: one entry to a callback or a buffer, nothing written to disk ---------- */
+#define RD_DONE (-1000) /* private: the entry is complete, stop decoding (never returned) */
+
+/* Before anything is allocated: the declared size must fit cap, and max_total must cover every
+ * byte that will be decoded (tar.gz and solid 7z: those before the entry too). */
+static int rd_limits(wk *w, uint64_t cap, uint64_t need) {
+    job *j = w->j;
+    j->total = (int64_t)need;
+    return w->e->usize > cap || (j->o->max_total && need > j->o->max_total) ? SLZ_E_LIMIT : 0;
+}
+
+/* zip, tar, gzip: the entry's own bytes, under slz_extract's overlap guard (in O(n), no sort) */
+static int rd_one(wk *w, size_t i, uint64_t cap) {
+    const slz_archive *a = w->j->a;
+    const slz_entry *e = w->e;
+    uint64_t lim = a->fmt == SLZ_ZIP ? a->cd_off : a->fmt == SLZ_GZ ? a->size - 8 : a->size, doff;
+    size_t k;
+    int r;
+    for (k = 0; k < a->n; k++) {
+        if (k == i || a->e[k].off < e->off) continue;
+        if (a->e[k].off == e->off) return SLZ_E_CORRUPT; /* two entries share their data */
+        lim = MIN(lim, a->e[k].off);
+    }
+    if ((r = entry_data(w, e, lim, NULL, &doff)) || (r = rd_limits(w, cap, e->usize))) return r;
+    w->src.pos = doff;
+    w->src.end = doff + e->csize;
+    if ((r = decode(w, e, 0, 0))) return r;
+    return verify(w, e, a->fmt != SLZ_TAR); /* tar has no checksum */
+}
+
+/* 7z: decode the entry's folder up to the end of the entry; in a solid folder the files before
+ * it are decoded and dropped. */
+typedef struct {
+    wk *w;
+    const folder7 *f;
+    uint64_t skip; /* bytes of earlier files still to drop */
+    uint32_t fcrc;
+    int last; /* the entry ends the folder: it is decoded fully and its CRC checked too */
+} rd7;
+
+static int rd7_wr(void *u, const uint8_t *p, size_t n) {
+    rd7 *s = (rd7 *)u;
+    wk *w = s->w;
+    size_t c = (size_t)MIN((uint64_t)n, s->skip);
+    int r;
+    if (s->last && s->f->has_crc) s->fcrc = slz_crc32(s->fcrc, p, n);
+    if (c) {
+        if ((r = account(w->j, c))) return r;
+        s->skip -= c;
+        p += c;
+        n -= c;
+    }
+    if (n && (r = w_wr(w, p, (size_t)MIN((uint64_t)n, w->e->usize - w->wpos)))) return r;
+    return !s->last && w->wpos == w->e->usize ? RD_DONE : 0;
+}
+
+static int rd_7z(wk *w, size_t i, uint64_t cap) {
+    const slz_archive *a = w->j->a;
+    const z7 *z = a->z7;
+    const slz_entry *e = w->e;
+    rd7 s;
+    size_t k;
+    int r;
+    if (z->entry_folder[i] == UINT32_MAX) return e->usize ? SLZ_E_CORRUPT : 0; /* no data: empty file */
+    if (z->entry_folder[i] >= z->nf) return SLZ_E_CORRUPT;
+    memset(&s, 0, sizeof s);
+    s.w = w;
+    s.f = &z->f[z->entry_folder[i]];
+    if ((r = z7_supported(s.f))) return r;
+    for (k = 0; k < s.f->nsub && z->sub_entry[s.f->first + k] != i; k++)
+        s.skip += a->e[z->sub_entry[s.f->first + k]].usize;
+    if (k == s.f->nsub) return SLZ_E_CORRUPT;
+    if (!e->usize) return verify(w, e, z->entry_hascrc[i]);
+    if ((r = rd_limits(w, cap, s.skip + e->usize))) return r; /* substream sizes add up to f->usize */
+    s.last = s.skip + e->usize == s.f->usize;
+    r = z7_decode(w->in, s.f, s.skip + e->usize, rd7_wr, &s);
+    if (r == RD_DONE) r = 0;
+    if (!r) r = verify(w, e, z->entry_hascrc[i]);
+    return !r && s.last && s.f->has_crc && s.fcrc != s.f->crc ? SLZ_E_CORRUPT : r;
+}
+
+/* tar.gz: inflate from the start up to the end of the entry, found again by its data offset */
+typedef struct {
+    wk *w;
+    tarp t;
+    uint64_t pos; /* tar bytes consumed */
+    int on;       /* inside the entry's data */
+} rdtgz;
+
+static int rdtgz_wr(void *u, const uint8_t *p, size_t n) {
+    rdtgz *g = (rdtgz *)u;
+    wk *w = g->w;
+    const slz_entry *e = w->e;
+    size_t used = 0;
+    while (used < n) {
+        size_t k, dn = 0;
+        const uint8_t *dp = NULL;
+        int r, ev = tar_step(&g->t, p + used, n - used, &k, &dp, &dn);
+        used += k;
+        if (ev == T_ERR || ev == T_END) return SLZ_E_CORRUPT; /* the tar ends before the entry does */
+        if (ev == T_DATA && g->on) {
+            if ((r = w_wr(w, dp, dn))) return r;
+            if (w->wpos == e->usize) return RD_DONE;
+            continue;
+        }
+        if ((r = account(w->j, k))) return r; /* headers, padding, other entries: decoded, dropped */
+        g->pos += k;
+        if (ev == T_ENTRY && g->pos >= e->off) {
+            if (g->pos != e->off || g->t.cur.type != SLZ_FILE || g->t.cur.usize != e->usize)
+                return SLZ_E_CORRUPT; /* not the entry the index found there */
+            g->on = 1;
+        }
+    }
+    return 0;
+}
+
+static int rd_tgz(wk *w, uint64_t cap) {
+    const slz_archive *a = w->j->a;
+    const slz_entry *e = w->e;
+    rdtgz *g;
+    int r;
+    if (!e->usize) return 0;
+    if ((r = rd_limits(w, cap, e->off > UINT64_MAX - e->usize ? UINT64_MAX : e->off + e->usize))) return r;
+    if (!(g = (rdtgz *)calloc(1, sizeof *g)) || !(w->z = inf_new())) {
+        free(g);
+        return SLZ_E_NOMEM;
+    }
+    g->w = w;
+    w->src.pos = a->gz_off;
+    w->src.end = a->size - 8;
+    inf_reset(w->z, w->src.pos, 0, NULL, 0, 0);
+    w->z->rd = rng_read;
+    w->z->wr = rdtgz_wr;
+    w->z->ck = NULL;
+    w->z->ru = &w->src;
+    w->z->wu = g;
+    r = inf_run(w->z);
+    tar_free(&g->t);
+    free(g);
+    return r == RD_DONE ? 0 : r ? r : SLZ_E_CORRUPT; /* the stream ended before the entry did */
+}
+
+static int rd_entry(slz_archive *a, size_t i, wr_fn put, void *pu, slz_opts *o, uint64_t cap) {
+    slz_opts def;
+    job j;
+    wk w;
+    int r;
+    if (a->partial || a->fd == OS_BAD) return SLZ_E_STATE;
+    if (i >= slz_count(a)) return a->lazy_err ? a->lazy_err : SLZ_E_ARG;
+    if (a->e[i].type != SLZ_FILE) return SLZ_E_NOTSUP;
+    if (!o) {
+        memset(&def, 0, sizeof def);
+        o = &def;
+    }
+    memset(&j, 0, sizeof j);
+    j.a = a;
+    j.o = o;
+    memset(&w, 0, sizeof w);
+    w.j = &j;
+    w.in = w.src.fd = a->fd;
+    w.out = OS_BAD;
+    w.e = &a->e[i];
+    w.put = put;
+    w.pu = pu;
+    r = a->fmt == SLZ_7Z ? rd_7z(&w, i, cap) : a->fmt == SLZ_TGZ ? rd_tgz(&w, cap) : rd_one(&w, i, cap);
+    free(w.buf);
+    free(w.z);
+    return r;
+}
+
+typedef struct {
+    slz_write_cb cb;
+    void *user;
+} rdcb;
+static int cb_put(void *u, const uint8_t *p, size_t n) {
+    const rdcb *c = (const rdcb *)u;
+    return n && c->cb(c->user, p, n) ? SLZ_E_CANCEL : 0;
+}
+int slz_read(slz_archive *a, size_t i, slz_write_cb cb, void *user, slz_opts *opts) {
+    rdcb c;
+    if (!a || !cb) return SLZ_E_ARG;
+    c.cb = cb;
+    c.user = user;
+    return rd_entry(a, i, cb_put, &c, opts, UINT64_MAX);
+}
+
+typedef struct {
+    uint8_t *p;
+    size_t n, cap;
+} rdmem;
+static int mem_put(void *u, const uint8_t *p, size_t n) {
+    rdmem *m = (rdmem *)u;
+    size_t c = MIN(n, m->cap - m->n);
+    if (c) memcpy(m->p + m->n, p, c);
+    m->n += c;
+    return c < n ? SLZ_E_LIMIT : 0; /* never past cap, whatever the archive declared */
+}
+int slz_read_mem(slz_archive *a, size_t i, void *buf, size_t cap, size_t *n) {
+    rdmem m;
+    int r;
+    if (n) *n = 0;
+    if (!a || (!buf && cap)) return SLZ_E_ARG;
+    m.p = (uint8_t *)buf;
+    m.n = 0;
+    m.cap = cap;
+    r = rd_entry(a, i, mem_put, &m, NULL, cap);
+    if (n) *n = m.n;
     return r;
 }

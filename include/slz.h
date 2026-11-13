@@ -24,7 +24,8 @@ enum {
     SLZ_E_LIMIT = -10,
     SLZ_E_CANCEL = -11,
     SLZ_E_STATE = -12,
-    SLZ_E_OPEN = -13
+    SLZ_E_OPEN = -13,
+    SLZ_E_ARG = -14
 };
 enum { SLZ_ZIP = 1, SLZ_TAR, SLZ_GZ, SLZ_TGZ, SLZ_7Z };
 /* compression methods (zip numbering where it exists) */
@@ -66,7 +67,16 @@ slz_archive *slz_open(const char *path, int *err);
 void slz_close(slz_archive *a);
 int slz_format(const slz_archive *a);
 /* tar.gz has no index: it is built by a full decompression pass on the first call to
- * slz_count / slz_get / slz_dir (0 / NULL / error code if that pass fails). */
+ * slz_count / slz_get / slz_dir (0 / NULL / error code if that pass fails).
+ *
+ * usize is the size the archive declares; treat it as untrusted and never allocate it without
+ * a limit of your own:
+ *   zip, 7z  any value up to 2^64-1, checked only by decoding;
+ *   tar      at most the archive's size;
+ *   tar.gz   from the tar headers, whose data the index pass found complete;
+ *   gzip     the trailer's ISIZE: the size modulo 2^32, so a lower bound (any size if forged).
+ * slz_extract and slz_read never produce more than usize and fail with SLZ_E_CORRUPT unless it is
+ * exact (gzip: modulo 2^32). */
 size_t slz_count(slz_archive *a);
 const slz_entry *slz_get(slz_archive *a, size_t i);
 
@@ -76,6 +86,32 @@ typedef int (*slz_dir_cb)(void *user, const char *name, size_t len, int is_dir, 
 int slz_dir(slz_archive *a, const char *dir, slz_dir_cb cb, void *user);
 
 int slz_extract(slz_archive *a, const char *dest, slz_opts *opts);
+
+/* Decode one SLZ_FILE entry (index i) in memory; nothing is written to disk.
+ *
+ * slz_read_mem: into buf, never past cap. *n (if n != NULL) = bytes stored, set on error too.
+ *   SLZ_E_LIMIT if the entry does not fit: before decoding if its usize > cap (*n = 0), else
+ *   (gzip with a wrong ISIZE) once cap bytes are stored (*n = cap). It has no max_total: for
+ *   untrusted tar.gz or solid 7z, prefer slz_read with one (see cost below).
+ * slz_read: the data goes to cb, in order and in chunks; a non-zero return cancels
+ *   (SLZ_E_CANCEL). opts may be NULL; only max_total, progress and user are used, the out
+ *   fields are left alone. max_total counts every byte decoded, including the ones before the
+ *   entry, and is checked against the declared sizes before anything is decoded.
+ *
+ * The data is unverified until SLZ_OK: the size and the entry's CRC (zip, gzip, 7z) are checked
+ * at the end. tar has no checksum, and stopping at the end of the entry skips the gzip trailer
+ * of a tar.gz and the folder CRC of a solid 7z (the entry's own CRC is still checked).
+ * Errors: SLZ_E_ARG (NULL a, cb, or buf with cap > 0; i out of range), SLZ_E_STATE (archive left
+ * mid destructive extraction), SLZ_E_NOTSUP (not a file), SLZ_E_ENCRYPTED, SLZ_E_METHOD,
+ * SLZ_E_CORRUPT, SLZ_E_LIMIT, SLZ_E_NOMEM, SLZ_E_IO, SLZ_E_CANCEL.
+ * Cost: tar.gz and solid 7z decode everything before the entry (reading every entry this way is
+ * quadratic: use slz_extract for bulk). Memory, freed on return: about 5 MiB for DEFLATE, 1 MiB
+ * for stored data, an LZMA window of at most the bytes decoded (+64 KiB with BCJ).
+ * Concurrent reads of one archive are safe once slz_count has returned. */
+typedef int (*slz_write_cb)(void *user, const void *p, size_t n);
+int slz_read(slz_archive *a, size_t i, slz_write_cb cb, void *user, slz_opts *opts);
+int slz_read_mem(slz_archive *a, size_t i, void *buf, size_t cap, size_t *n);
+
 uint32_t slz_crc32(uint32_t crc, const void *p, size_t n);
 const char *slz_strerror(int err);
 
