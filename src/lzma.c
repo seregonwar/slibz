@@ -278,6 +278,9 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
     unsigned state = s->state;
     uint32_t rep0 = s->rep[0], rep1 = s->rep[1], rep2 = s->rep[2], rep3 = s->rep[3];
     const unsigned pbm = (1u << s->pb) - 1, lpm = (1u << s->lp) - 1, lc = s->lc;
+    /* the last byte written (0 at the start): kept in a register, so the next literal does not
+     * wait for it to come back from the window */
+    unsigned prev = pos ? dict[dpos ? dpos - 1 : dsize - 1] : 0;
     const uint8_t *ifast; /* last input position at which a symbol may start without a refill */
     size_t dlim;          /* window position at which output is handed to wr: flush or wrap */
     int r = 0;
@@ -316,7 +319,7 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
         }
         ps = (unsigned)pos & pbm;
         if (!bit(&rc, &s->m.is_match[state][ps])) { /* literal */
-            unsigned prev = pos ? dict[dpos ? dpos - 1 : dsize - 1] : 0, sym;
+            unsigned sym;
             uint16_t *p = s->lit + 0x300 * ((((unsigned)pos & lpm) << lc) + (prev >> (8 - lc)));
             if (state >= 7) { /* after a match: decode against the byte at rep0 */
                 unsigned mb = rep0 < pos ? dict[dpos > rep0 ? dpos - rep0 - 1 : dpos + dsize - rep0 - 1] : 0;
@@ -325,6 +328,7 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
                 sym = tree(&rc, p, 8);
             }
             dict[dpos++] = (uint8_t)sym;
+            prev = sym;
             pos++;
             n--;
             state = state < 4 ? 0 : state < 10 ? state - 3 : state - 6;
@@ -364,8 +368,8 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
                             break;
                         }
                         state = state < 7 ? 9 : 11;
-                        dict[dpos] = dict[dpos > rep0 ? dpos - rep0 - 1 : dpos + dsize - rep0 - 1];
-                        dpos++;
+                        prev = dict[dpos > rep0 ? dpos - rep0 - 1 : dpos + dsize - rep0 - 1];
+                        dict[dpos++] = (uint8_t)prev;
                         pos++;
                         n--;
                         continue;
@@ -420,6 +424,7 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
                         *dst++ = *src++;
                     while (dst < end);
                 }
+                prev = end[-1];
             } else {
                 /* copy in runs that are contiguous on both sides of the circular window; a forward
                  * byte copy is correct for overlapping runs (distance < length) */
@@ -439,6 +444,7 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
                         dpos = 0;
                     }
                 }
+                prev = dict[dpos - 1]; /* dpos > 0: the window wraps only before a byte is copied */
                 if (s->err) break;
                 DLIM();
             }
