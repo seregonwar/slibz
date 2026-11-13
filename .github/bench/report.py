@@ -507,8 +507,9 @@ def dashboard(hist, latest):
     run = f" · [workflow run]({latest['run_url']})" if latest.get("run_url") else ""
     out = ["# slz benchmarks", "",
            f"Written by [`.github/workflows/bench.yml`]({base}/blob/main/.github/workflows/bench.yml) after every push "
-           f"to `main` that touches the code; the [README]({base}#continuous-benchmarks) embeds the banners and "
-           "badges from this branch. Generated files: don't edit them by hand.", "",
+           f"to `main` that touches the code; the [README]({base}#readme) embeds the banners and badges from this "
+           f"branch and [docs/benchmarks.md]({base}/blob/main/docs/benchmarks.md) explains them. Generated files: "
+           "don't edit them by hand.", "",
            f"**Newest run:** [`{sha[:7]}`]({base}/commit/{sha}) {md(latest.get('subject'))} · measured "
            f"{(latest.get('measured_at') or '?').replace('T', ' ').rstrip('Z')} UTC{run}", "",
            picture(f"{raw}/svg/hero", describe(latest)), "",
