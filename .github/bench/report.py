@@ -501,6 +501,9 @@ def dashboard(hist, latest):
     repo = latest.get("repository") or "seregonwar/slibz"
     server = (latest.get("run_url") or "https://github.com/").split("/" + repo)[0].rstrip("/") or "https://github.com"
     base, sha = f"{server}/{repo}", latest.get("commit") or ""
+    # absolute image URLs: GitHub rewrites a relative <img src> but not necessarily a <source srcset>
+    raw = (f"https://raw.githubusercontent.com/{repo}/bench-data" if server == "https://github.com"
+           else f"{base}/raw/bench-data")
     run = f" · [workflow run]({latest['run_url']})" if latest.get("run_url") else ""
     out = ["# slz benchmarks", "",
            f"Written by [`.github/workflows/bench.yml`]({base}/blob/main/.github/workflows/bench.yml) after every push "
@@ -508,7 +511,8 @@ def dashboard(hist, latest):
            "badges from this branch. Generated files: don't edit them by hand.", "",
            f"**Newest run:** [`{sha[:7]}`]({base}/commit/{sha}) {md(latest.get('subject'))} · measured "
            f"{(latest.get('measured_at') or '?').replace('T', ' ').rstrip('Z')} UTC{run}", "",
-           picture("svg/hero", describe(latest)), "", picture("svg/trend", "slz decoder throughput over time"), "",
+           picture(f"{raw}/svg/hero", describe(latest)), "",
+           picture(f"{raw}/svg/trend", "slz decoder throughput over time"), "",
            "## Newest run", "", f"{machine(latest.get('env') or {})}, {(latest.get('env') or {}).get('cc', '')}.", ""]
     out += results_table(latest)
     vs = versions(latest)
