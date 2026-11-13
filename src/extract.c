@@ -193,8 +193,12 @@ static int one(void *wv, size_t k, const jrec *res) {
             if (os_pread(w->out, w->buf, hn, w->wpos - hn) != (int64_t)hn) return SLZ_E_STATE;
         }
         os_add(&j->out, (int64_t)w->wpos);
+        /* drop whatever was written past the checkpoint */
+        if ((r = os_trunc(w->out, w->wpos))) return r;
     }
-    if ((r = os_trunc(w->out, w->wpos))) return r;
+    /* A new file is already empty (created with O_EXCL / CREATE_NEW) and is never truncated: on
+     * ext4 a truncate to size 0 arms auto_da_alloc, which makes close() start writeback of the
+     * whole file, so extraction would run at disk speed instead of page-cache speed. */
     if (e->method == 0) {
         while (w->src.pos < w->src.end) {
             size_t c = (size_t)MIN((uint64_t)CHUNK, w->src.end - w->src.pos);
