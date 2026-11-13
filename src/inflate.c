@@ -382,8 +382,9 @@ INF_INLINE int codes(inf *s) {
             /* Fast loop. Invariant at the top: (u8)bn >= 56 and e = primary entry for bb.
              * Upper bits of bn are garbage: whole entries are subtracted and only the low 8
              * bits count. Bit budget per refill: 2 literals (<= 22) + a length (<= 20, with
-             * subtable) leave >= 14 bits to preload the distance entry; the distance
-             * (<= 28) refills first if needed so >= 11 bits remain for the next lookup. */
+             * subtable) leave >= 14 bits to preload the distance entry; before the distance
+             * (<= 8 + 13 bits from the primary table, <= 28 with a subtable) the loop refills
+             * if needed so >= 11 bits remain for the next lookup. */
             const uint8_t *pf = pe - FAST_IN;
             const size_t of = OBUF - FAST_OUT;
             REFILL();
@@ -439,12 +440,14 @@ INF_INLINE int codes(inf *s) {
                 }
                 len = (e >> 16) + EXTRA(e);
                 e = s->dt[bb & DTM];
-                if ((uint8_t)bn < 28 + LT_BITS) REFILL();
                 if (UNLIKELY(e & EXC)) {
+                    if ((uint8_t)bn < 28 + LT_BITS) REFILL();
                     if (!(e & SUB)) return SLZ_E_CORRUPT;
                     CONSUME(e);
                     e = s->dt[(e >> 16) + ((unsigned)bb & ((1u << (e >> 8 & 15)) - 1))];
                     if (e & EXC) return SLZ_E_CORRUPT;
+                } else if ((uint8_t)bn < DT_BITS + 13 + LT_BITS) { /* primary-table distance */
+                    REFILL();
                 }
                 sv = bb;
                 CONSUME(e);
