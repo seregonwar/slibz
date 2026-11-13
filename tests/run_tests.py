@@ -266,6 +266,25 @@ def main():
         p = run("l", arcs["def9.zip"], "text")
         check("lorem.txt" in p.stdout and "utf8-" in p.stdout, "tree listing of text/")
 
+        # gzip without FNAME: the member is named after the archive minus .gz, never after the journal
+        p = os.path.join(arcdir, "noname.txt.gz")
+        with open(p, "wb") as f, gzip.GzipFile(filename="", mode="wb", fileobj=f) as g:
+            g.write(open(os.path.join(src, "text/lorem.txt"), "rb").read())
+        r = run("l", p, expect=True)
+        check(r.stdout.rstrip().endswith("  noname.txt") and "slzstate" not in r.stdout,
+              f"FNAME-less gzip listed as {r.stdout.strip()!r}")
+        for extra in ([], ["-d"]):  # destructive: extracted next to the archive, where the journal lives
+            dst = os.path.join(work, "noname" + "".join(extra))
+            os.makedirs(dst)
+            q = os.path.join(dst, "noname.txt.gz")
+            shutil.copy(p, q)
+            run("x", q, dst, "-q", *extra, expect=True)
+            ref = {"noname.txt": want["text/lorem.txt"]}
+            if not extra:
+                ref["noname.txt.gz"] = hashlib.sha256(open(p, "rb").read()).hexdigest()
+            check(tree(dst) == ref, f"FNAME-less gzip {extra}: got {sorted(tree(dst))}")
+            shutil.rmtree(dst)
+
         # 2. existing files are not overwritten unless -o
         dst = os.path.join(work, "exist")
         run("x", arcs["store.zip"], dst, "-q", expect=True)
