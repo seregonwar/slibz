@@ -6,7 +6,7 @@
 
 Builds datasets in <workdir> (Silesia corpus from /opt/corpora, a many-small-files tree from
 /usr, a 500k-entry listing stress zip), then times listing and extraction, best of N runs with
-a warm page cache. Prints Markdown tables (copied into the README). --sets picks the datasets,
+a warm page cache. Prints Markdown tables (copied into docs/benchmarks.md). --sets picks the datasets,
 --json also writes the times in seconds (used by .github/workflows/bench.yml), and $SLZ_CORPUS
 moves the Silesia directory (silesia.zip, unpacked into files/)."""
 import json, os, shutil, subprocess, sys, time, zipfile
