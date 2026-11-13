@@ -11,9 +11,9 @@ extraction interrupted and resumed many times.
 Without options every part runs in turn. CTest runs the parts in parallel instead: --prepare DIR
 builds the corpus and archives once, then each test runs one --part (optionally one --shard K/N of
 it) against --data DIR, which it only reads."""
-import argparse, gzip, hashlib, io, json, os, random, shutil, struct, subprocess, sys, tarfile, tempfile, zipfile
+import argparse, gzip, hashlib, io, json, os, random, shutil, struct, subprocess, sys, tarfile, tempfile, zipfile, zlib
 
-PARTS = ("roundtrip", "hostile", "fuzz", "destructive", "kill", "fault")
+PARTS = ("roundtrip", "hostile", "read", "fuzz", "destructive", "kill", "fault")
 ap = argparse.ArgumentParser(description="slz end-to-end tests")
 ap.add_argument("cli")
 ap.add_argument("tester")
@@ -484,6 +484,191 @@ def part_fault(work, src, want, arcs):
     for name in ("def1.zip", "nonsolid.7z"):
         if name in arcs and (not A.only or name == A.only):
             fault_test(arcs[name], work, want, name)
+
+
+SLZ_FILE = 0  # slz_entry.type
+SLZ_E_CORRUPT, SLZ_E_ENCRYPTED, SLZ_E_NOTSUP, SLZ_E_LIMIT, SLZ_E_STATE, SLZ_E_ARG = -4, -7, -9, -10, -12, -14
+SLZ_BLOCK = 1 << 20  # block size of the .slz archives part_read creates (slz a -b 1)
+
+
+def read_rows(arc, *args):
+    """slz-test read: one dict per entry, read through slz_read_mem then slz_read (cross-checked in C)"""
+    r = subprocess.run([TESTER, "read", arc, *args], capture_output=True)
+    err = r.stderr.decode(errors="replace")
+    check(r.returncode == 0 and "Sanitizer" not in err and "runtime error" not in err,
+          f"slz-test read {os.path.basename(arc)} {' '.join(args)}: rc={r.returncode} {err[-2000:].strip()}")
+    rows = []
+    for line in r.stdout.decode("utf-8", "surrogateescape").splitlines():
+        i, typ, off, usize, rm, n, crc, rc, total, name = line.split(" ", 9)
+        name = name.replace("\\", "/")
+        rows.append(dict(i=int(i), type=int(typ), off=int(off), usize=int(usize), rm=int(rm), n=int(n),
+                         crc=int(crc, 16), rc=int(rc), total=int(total), name=name[2:] if name.startswith("./") else name))
+    return rows
+
+
+def arc_kind(name):
+    return "tgz" if name.endswith(".tar.gz") else "7z" if name.endswith(".7z") else "slz" if name.endswith(".slz") else ""
+
+
+def read_need(rows, r, kind):
+    """bytes slz_read decodes for entry r (its progress total): tar.gz and solid 7z decode from the start"""
+    if not r["usize"]:
+        return 0
+    if kind == "tgz":
+        return r["off"] + r["usize"]
+    if kind == "7z":  # the files of one folder share its data offset, listed in decoding order
+        return sum(x["usize"] for x in rows[: r["i"]] if x["off"] == r["off"]) + r["usize"]
+    if kind == "slz":  # the whole blocks it covers: full SLZ_BLOCK ones back to back, the last one shorter
+        end = max(x["off"] + x["usize"] for x in rows if x["type"] == SLZ_FILE)
+        return min(-(-(r["off"] + r["usize"]) // SLZ_BLOCK) * SLZ_BLOCK, end) - r["off"] // SLZ_BLOCK * SLZ_BLOCK
+    return r["usize"]
+
+
+def part_read(work, src, want, arcs):
+    # 8. slz_read / slz_read_mem: single entries into memory, nothing written to disk
+    files = {k: open(os.path.join(src, k), "rb").read() for k, v in want.items() if v != "dir"}
+    hostile = {"overlap.zip": overlapping_zip(), **overlap_variants()}
+    sz = shutil.which("7z") or shutil.which("7zz") or shutil.which("7za")
+    if sz:
+        subprocess.run([sz, "a", "-bd", "-y", "-psecret", "-mhe=off", os.path.join(work, "aes.7z"), "text"], cwd=src,
+                       check=True, stdout=subprocess.DEVNULL)
+    for name, data in hostile.items():
+        open(os.path.join(work, name), "wb").write(data)
+
+    def expect_ok(name, rows, got):
+        for g in got:
+            if g["i"] >= len(rows) or g["type"] != SLZ_FILE:
+                check(g["i"] < len(rows) and (g["rm"], g["n"], g["rc"]) == (SLZ_E_NOTSUP, 0, SLZ_E_NOTSUP),
+                      f"read {name} {g['name']}: {g}")
+                continue
+            data = files["text/lorem.txt"] if name == "gz" else files.get(g["name"])
+            check(data is not None and (g["rm"], g["n"], g["crc"], g["rc"], g["total"]) ==
+                  (0, len(data), zlib.crc32(data), 0, read_need(rows, rows[g["i"]], arc_kind(name))),
+                  f"read {name} {g['name']}: {g}")
+
+    # every entry of every archive with cap=0 and max_total=1: refused up front from the declared sizes
+    listed = {}
+    for name, p in arcs.items():
+        rows = read_rows(p, "cap=0", "max=1")
+        check(rows and [r["i"] for r in rows] == list(range(len(rows))), f"read {name}: {len(rows)} rows")
+        for r in rows:
+            need = read_need(rows, r, arc_kind(name))
+            exp = ((SLZ_E_NOTSUP, 0, SLZ_E_NOTSUP) if r["type"] != SLZ_FILE else (0, 0, 0, 0) if not r["usize"]
+                   else (SLZ_E_LIMIT, 0, SLZ_E_LIMIT, 0) if need > 1 else (SLZ_E_LIMIT, 0, 0, 1))
+            check((r["rm"], r["n"], r["rc"], r["total"])[: len(exp)] == exp, f"read {name} {r['name']} cap=0 max=1: {r}")
+        listed[name] = rows
+        past = read_rows(p, str(len(rows)))
+        check([(r["type"], r["rm"], r["n"], r["rc"]) for r in past] == [(-1, SLZ_E_ARG, 0, SLZ_E_ARG)],
+              f"read {name}: index past the end: {past}")
+
+    # whole archives, entry by entry: the exact data, the CRC, the progress total
+    for name in ("store.zip", "def1.zip", "zip64.zip", "pax.tar", "gz", "nonsolid.7z"):
+        if name not in arcs:
+            continue
+        got = read_rows(arcs[name])
+        check(len(got) == len(listed[name]), f"read {name}: {len(got)} rows")
+        expect_ok(name, listed[name], got)
+        ref = {"lorem.txt"} if name == "gz" else set(files)
+        names = {g["name"] for g in got if g["type"] == SLZ_FILE}
+        check(names == ref, f"read {name}: entries differ: {sorted(names ^ ref)[:5]}")
+
+    # tar.gz and solid 7z decode from the start: a sample, with entries after the largest ones and the
+    # last one of the stream / folder (whose own checks run too)
+    after = {"pax.tar.gz": 3, "lzma2.7z": 1, "bcj.7z": 1, "copy.7z": 1, "deflate.7z": 1}
+    for name in ("pax.tar.gz", "lzma2.7z", "lzma.7z", "copy.7z", "deflate.7z", "bcj.7z", "plainhdr.7z", "ultra.7z"):
+        if name not in arcs:
+            continue
+        rows = listed[name]
+        data = [r for r in rows if r["type"] == SLZ_FILE and r["usize"]]
+        pick = {r["i"] for r in data[:2] + [r for r in rows if r["type"] == SLZ_FILE and not r["usize"]][:2]}
+        for b in sorted(data, key=lambda r: -r["usize"])[: after.get(name, 0)]:
+            nxt = [r for r in data if r["i"] > b["i"] and (arc_kind(name) == "tgz" or r["off"] == b["off"])]
+            pick.add(nxt[0]["i"] if nxt else b["i"])
+        if data and name in ("pax.tar.gz", "bcj.7z", "copy.7z", "deflate.7z"):
+            pick.add(data[-1]["i"])
+        got = read_rows(arcs[name], *[str(i) for i in sorted(pick)])
+        check([g["i"] for g in got] == sorted(pick), f"read {name}: rows {[g['i'] for g in got]} for {sorted(pick)}")
+        expect_ok(name, rows, got)
+
+    # .slz with 1 MiB blocks (files spanning blocks, blocks holding many files), zstd (LZ4 if not built
+    # in), LZ4, stored: refused up front with cap=0 max=1, then every entry (a sample for LZ4 and stored)
+    for name, extra in (("zstd.slz", []), ("lz4.slz", ["--lz4"]), ("store.slz", ["--store"])):
+        p = os.path.join(work, name)
+        run("a", p, *[os.path.join(src, t) for t in sorted(os.listdir(src))], "-b", "1", "-q", *extra, expect=True)
+        rows = read_rows(p, "cap=0", "max=1")
+        for r in rows:
+            exp = ((SLZ_E_NOTSUP, 0, SLZ_E_NOTSUP) if r["type"] != SLZ_FILE else (0, 0, 0, 0) if not r["usize"]
+                   else (SLZ_E_LIMIT, 0, SLZ_E_LIMIT, 0))
+            check((r["rm"], r["n"], r["rc"], r["total"])[: len(exp)] == exp, f"read {name} {r['name']} cap=0 max=1: {r}")
+        names = {r["name"] for r in rows if r["type"] == SLZ_FILE}
+        check(names == set(files), f"read {name}: entries differ: {sorted(names ^ set(files))[:5]}")
+        data = [r for r in rows if r["type"] == SLZ_FILE and r["usize"]]
+        check(any(r["usize"] > SLZ_BLOCK for r in data) and len(data) > 2, f"read {name}: no file spans blocks")
+        pick = [str(r["i"]) for r in data if r["usize"] > SLZ_BLOCK or r in (data[0], data[-1])]
+        expect_ok(name, rows, read_rows(p, *([] if name == "zstd.slz" else pick)))
+    # a damaged stored block: exactly the files on it fail (stored blocks follow the 32-byte header)
+    raw = bytearray(open(p, "rb").read())
+    raw[32 + SLZ_BLOCK + 7] ^= 0xFF
+    p = os.path.join(work, "bad.slz")
+    open(p, "wb").write(raw)
+    got = read_rows(p)
+    hit = [g for g in got if g["type"] == SLZ_FILE and g["usize"] and g["off"] < 2 * SLZ_BLOCK
+           and g["off"] + g["usize"] > SLZ_BLOCK]
+    check(hit and all((g["rm"], g["rc"]) == (SLZ_E_CORRUPT, SLZ_E_CORRUPT) for g in hit), f"read bad.slz: {hit[:3]}")
+    expect_ok("bad.slz", rows, [g for g in got if g not in hit])
+
+    # cap below the declared size: refused before decoding (an option applies to the indices after it)
+    rows = listed["def1.zip"]
+    r2 = next(r["i"] for r in rows if r["name"] == "rand/r2.bin")
+    em = next(r["i"] for r in rows if r["name"] == "empty.txt")
+    got = read_rows(arcs["def1.zip"], "cap=69999", str(r2), "cap=0", str(r2), str(em))
+    check([(g["i"], g["rm"], g["n"], g["rc"], g["total"]) for g in got] ==
+          [(r2, SLZ_E_LIMIT, 0, 0, 70000), (r2, SLZ_E_LIMIT, 0, 0, 70000), (em, 0, 0, 0, 0)], f"read def1.zip caps: {got}")
+
+    # gzip whose trailer understates the size: slz_read_mem stops at cap, max_total stops slz_read
+    lorem = files["text/lorem.txt"]
+    raw = bytearray(open(arcs["gz"], "rb").read())
+    struct.pack_into("<I", raw, len(raw) - 4, 1000)
+    p = os.path.join(work, "lie.txt.gz")
+    open(p, "wb").write(raw)
+    got = read_rows(p) + read_rows(p, "cap=2097152", "max=1000")
+    check([(g["rm"], g["n"], g["crc"], g["rc"]) for g in got] ==
+          [(SLZ_E_LIMIT, 1000, zlib.crc32(lorem[:1000]), SLZ_E_CORRUPT),
+           (SLZ_E_CORRUPT, len(lorem), zlib.crc32(lorem), SLZ_E_LIMIT)], f"read: gzip with a false size: {got}")
+
+    # overlapping zip entries: the ones sharing bytes are refused, the others read normally
+    for name, exp in (("overlap.zip", {"a.txt": -4, "b.txt": -4}),
+                      ("overlap_partial.zip", {"a.txt": -4, "b.txt": 0, "c.txt": 0}),
+                      ("overlap_nested.zip", {"a.txt": -4, "b.txt": -4, "c.txt": 0}),
+                      ("overlap_into_cd.zip", {"a.txt": 0, "b.txt": 0, "c.txt": -4}),
+                      ("overlap_all.zip", {"a.txt": -4, "b.txt": -4, "c.txt": -4})):
+        got = read_rows(os.path.join(work, name))
+        check({g["name"]: (g["rm"], g["rc"]) for g in got} == {k: (v, v) for k, v in exp.items()}, f"read {name}: {got}")
+        for g in got:
+            if g["rm"] == 0:
+                body = g["name"][0].upper().encode() * 1000
+                check((g["n"], g["crc"]) == (1000, zlib.crc32(body)), f"read {name} {g['name']}: {g}")
+
+    p = os.path.join(work, "aes.7z")
+    if os.path.exists(p):
+        got = read_rows(p)
+        check(got and all((g["rm"], g["n"], g["rc"]) == ((SLZ_E_ENCRYPTED, 0, SLZ_E_ENCRYPTED) if g["type"] == SLZ_FILE
+                                                         else (SLZ_E_NOTSUP, 0, SLZ_E_NOTSUP)) for g in got),
+              f"read aes.7z: {got}")
+
+    # an archive left half-extracted by a destructive run (its journal is still there) is not read
+    d = os.path.join(work, "rd-state")
+    os.makedirs(os.path.join(d, "out"))
+    p = os.path.join(d, "store.zip")
+    shutil.copy(arcs["store.zip"], p)
+    open(os.path.join(d, "out", "empty.txt"), "wb").close()
+    run("x", p, os.path.join(d, "out"), "-q", "-d", expect=False)
+    check(os.path.exists(p + ".slzstate"), "read: the failed destructive run left no journal")
+    got = read_rows(p)
+    check(got and all((g["rm"], g["n"], g["rc"]) == (SLZ_E_STATE, 0, SLZ_E_STATE) for g in got),
+          f"read: half-extracted archive: {got[:3]}")
+    shutil.rmtree(d, ignore_errors=True)
+    print(f"read: {sum(len(r) for r in listed.values())} entries in {len(listed)} archives")
 
 
 def main():

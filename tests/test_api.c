@@ -1,8 +1,13 @@
 /* API-level tests that need library internals or interruption control.
  * Copyright (c) 2026 Seregon. SPDX-License-Identifier: MIT
  *
- *   slz-test unit                          sanitizer, tree listing, journal and in-memory inflate unit tests
+ *   slz-test unit                          sanitizer, tree listing, journal, in-memory inflate and read argument unit tests
  *   slz-test list <archive>                one line per entry: data offset, usize, name
+ *   slz-test read <archive> [cap=N] [max=N] [index]...  every entry (or the given ones; each option
+ *                                          applies to the indices after it) through slz_read_mem
+ *                                          (cap: N, default the declared size) then slz_read
+ *                                          (max_total: N), cross-checked; one line per entry:
+ *                                          index type off usize mem_rc n crc32 cb_rc total name
  *   slz-test resume <archive> <dest> <KiB> [checkpoint_KiB] destructive extraction, cancelled every <KiB> of
  *                                          output and resumed until done (simulated crashes);
  *                                          prints the peak on-disk size of the archive. */
@@ -410,19 +415,195 @@ static int list(const char *archive) {
     return err != 0;
 }
 
+/* ---------- slz_read / slz_read_mem ---------- */
+typedef struct {
+    const uint8_t *ref; /* what slz_read_mem stored: slz_read must deliver the same bytes */
+    size_t refn;
+    uint64_t got, done, total;
+    uint32_t crc;
+    int bad, stop, pstop, pcalls;
+} rd_ctx;
+
+static int rd_sink(void *u, const void *p, size_t n) {
+    rd_ctx *c = (rd_ctx *)u;
+    if (!n) { /* never called with nothing */
+        c->bad = 1;
+        return c->stop;
+    }
+    if (c->got < c->refn && memcmp(c->ref + (size_t)c->got, p, (size_t)MIN((uint64_t)n, c->refn - c->got)))
+        c->bad = 1;
+    c->crc = slz_crc32(c->crc, p, n);
+    c->got += n;
+    return c->stop;
+}
+
+static int rd_prog(void *u, uint64_t done, uint64_t total) {
+    rd_ctx *c = (rd_ctx *)u;
+    if (done < c->done) c->bad = 1;
+    c->done = done;
+    c->total = total;
+    c->pcalls++;
+    return c->pstop;
+}
+
+static uint32_t crc_of(const uint8_t *p, size_t n) {
+    return n ? slz_crc32(0, p, n) : 0;
+}
+
+static void read_one(slz_archive *a, size_t i, int has_cap, uint64_t capv, uint64_t max) {
+    static int cancelled; /* the cancel paths: once per run, on the first entry with data */
+    const slz_entry *e = slz_get(a, i);
+    uint64_t us = e ? e->usize : 0;
+    size_t cap = (size_t)(has_cap ? capv : MIN(us, (uint64_t)256 << 20)), n = 12345, k;
+    uint8_t *buf = cap ? (uint8_t *)malloc(cap + 64) : NULL;
+    rd_ctx c;
+    slz_opts o;
+    int rm, rc;
+    if (cap && !buf) {
+        fprintf(stderr, "read %llu: out of memory\n", (unsigned long long)i);
+        fails++;
+        return;
+    }
+    if (buf) memset(buf + cap, 0xa5, 64);
+    rm = slz_read_mem(a, i, buf, cap, &n);
+    for (k = 0; buf && k < 64; k++)
+        CHECK(buf[cap + k] == 0xa5); /* never past cap */
+    CHECK(n <= cap);
+    if (!rm) CHECK(e && (slz_format(a) == SLZ_GZ ? (uint64_t)n & 0xffffffffu : (uint64_t)n) == e->usize);
+    if (rm == SLZ_E_LIMIT) CHECK(n == (us > cap ? 0 : cap)); /* refused up front, or cut at cap */
+    if (rm == SLZ_E_ARG || rm == SLZ_E_STATE || rm == SLZ_E_NOTSUP || rm == SLZ_E_ENCRYPTED || rm == SLZ_E_METHOD)
+        CHECK(n == 0);
+
+    memset(&c, 0, sizeof c);
+    c.ref = buf;
+    c.refn = n;
+    memset(&o, 0, sizeof o);
+    o.max_total = max;
+    o.progress = rd_prog;
+    o.user = &c;
+    rc = slz_read(a, i, rd_sink, &c, &o);
+    CHECK(!c.bad);
+    CHECK(rc || c.done == c.total);
+    CHECK(!max || (c.got <= max && c.done <= max));
+    if (!rm && !rc) CHECK(c.got == n && c.crc == crc_of(buf, n));
+    if (!rc && !max && c.total > 1) { /* max_total is checked against the declared sizes up front */
+        rd_ctx d;
+        memset(&d, 0, sizeof d);
+        o.user = &d;
+        o.max_total = c.total - 1;
+        CHECK(slz_read(a, i, rd_sink, &d, &o) == SLZ_E_LIMIT && d.got == 0 && d.pcalls == 0);
+        if (c.total <= 1u << 20) {
+            memset(&d, 0, sizeof d);
+            o.max_total = c.total;
+            CHECK(slz_read(a, i, rd_sink, &d, &o) == 0 && d.got == c.got && d.crc == c.crc);
+        }
+    }
+    if (!rc && c.got && !cancelled) { /* cancelled by the sink, then by progress (before any data) */
+        rd_ctx d;
+        cancelled = 1;
+        memset(&d, 0, sizeof d);
+        d.stop = 1;
+        CHECK(slz_read(a, i, rd_sink, &d, NULL) == SLZ_E_CANCEL && d.got > 0);
+        memset(&d, 0, sizeof d);
+        d.pstop = 1;
+        o.user = &d;
+        o.max_total = 0;
+        CHECK(slz_read(a, i, rd_sink, &d, &o) == SLZ_E_CANCEL && d.pcalls == 1 && d.got == 0);
+    }
+    printf("%llu %d %llu %llu %d %llu %08lx %d %llu %s\n", (unsigned long long)i, e ? (int)e->type : -1,
+           (unsigned long long)(e ? e->off : 0), (unsigned long long)us, rm, (unsigned long long)n,
+           (unsigned long)crc_of(buf, n), rc, (unsigned long long)c.total, e ? e->name : "-");
+    free(buf);
+}
+
+static int read_mode(int argc, char **argv) {
+    int err, k, has_cap = 0, any = 0;
+    uint64_t capv = 0, max = 0;
+    slz_archive *a = slz_open(argv[2], &err);
+    if (!a) {
+        fprintf(stderr, "open: %s\n", slz_strerror(err));
+        return 1;
+    }
+    for (k = 3; k < argc; k++) {
+        if (!strncmp(argv[k], "cap=", 4)) {
+            has_cap = 1;
+            capv = (uint64_t)strtoull(argv[k] + 4, NULL, 10);
+        } else if (!strncmp(argv[k], "max=", 4)) {
+            max = (uint64_t)strtoull(argv[k] + 4, NULL, 10);
+        } else {
+            read_one(a, (size_t)strtoull(argv[k], NULL, 10), has_cap, capv, max);
+            any = 1;
+        }
+    }
+    if (!any) {
+        size_t i, cnt = slz_count(a);
+        for (i = 0; i < cnt; i++)
+            read_one(a, i, has_cap, capv, max);
+    }
+    slz_close(a);
+    return fails != 0;
+}
+
+static int nul_cb(void *u, const void *p, size_t n) {
+    (void)u;
+    (void)p;
+    (void)n;
+    return 0;
+}
+
+/* argument and state errors, all detected before any data is read (hand-built archive, no file) */
+static void test_read_args(void) {
+    slz_entry e[2];
+    slz_archive ar;
+    uint8_t b[4];
+    size_t n = 7;
+    memset(&ar, 0, sizeof ar);
+    memset(e, 0, sizeof e);
+    e[0].name = "d/";
+    e[0].nlen = 2;
+    e[0].type = SLZ_DIR;
+    e[1].name = "f";
+    e[1].nlen = 1;
+    e[1].type = SLZ_FILE;
+    e[1].usize = e[1].csize = 1;
+    ar.e = e;
+    ar.n = 2;
+    ar.fmt = SLZ_ZIP;
+    ar.fd = OS_BAD;
+    CHECK(!strcmp(slz_strerror(SLZ_E_ARG), "invalid argument"));
+    CHECK(!strcmp(slz_strerror(SLZ_E_ARG - 1), "unknown error"));
+    CHECK(slz_read(NULL, 0, nul_cb, NULL, NULL) == SLZ_E_ARG);
+    CHECK(slz_read(&ar, 1, NULL, NULL, NULL) == SLZ_E_ARG);
+    CHECK(slz_read_mem(NULL, 1, b, sizeof b, &n) == SLZ_E_ARG && n == 0);
+    n = 7;
+    CHECK(slz_read_mem(&ar, 1, NULL, 1, &n) == SLZ_E_ARG && n == 0);
+    CHECK(slz_read(&ar, 1, nul_cb, NULL, NULL) == SLZ_E_STATE); /* no archive file behind it */
+    ar.fd = 0;                                                  /* never read: each call below fails first */
+    n = 7;
+    CHECK(slz_read_mem(&ar, 0, b, sizeof b, &n) == SLZ_E_NOTSUP && n == 0);
+    CHECK(slz_read_mem(&ar, 0, NULL, 0, NULL) == SLZ_E_NOTSUP);
+    CHECK(slz_read(&ar, 2, nul_cb, NULL, NULL) == SLZ_E_ARG);
+    CHECK(slz_read_mem(&ar, (size_t)-1, b, sizeof b, &n) == SLZ_E_ARG);
+    ar.partial = 1;
+    CHECK(slz_read(&ar, 1, nul_cb, NULL, NULL) == SLZ_E_STATE);
+}
+
 int main(int argc, char **argv) {
     if (argc >= 2 && !strcmp(argv[1], "unit")) {
         test_sanitize();
         test_tree();
         test_journal();
         test_inflate();
+        test_read_args();
         printf("%s\n", fails ? "unit: FAILED" : "unit: ok");
         return fails != 0;
     }
     if (argc == 3 && !strcmp(argv[1], "list")) return list(argv[2]);
+    if (argc >= 3 && !strcmp(argv[1], "read")) return read_mode(argc, argv);
     if ((argc == 5 || argc == 6) && !strcmp(argv[1], "resume"))
         return resume(argv[2], argv[3], (uint64_t)atoll(argv[4]) << 10,
                       argc == 6 ? (uint64_t)atoll(argv[5]) << 10 : 0);
-    fprintf(stderr, "usage: slz-test unit | list <archive> | resume <archive> <dest> <KiB> [checkpoint_KiB]\n");
+    fprintf(stderr, "usage: slz-test unit | list <archive> | read <archive> [cap=N] [max=N] [index]... |"
+                    " resume <archive> <dest> <KiB> [checkpoint_KiB]\n");
     return 2;
 }

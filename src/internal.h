@@ -279,7 +279,8 @@ typedef struct {
 
 int open_7z(slz_archive *a, const uint8_t *head, size_t hn);
 int z7_supported(const folder7 *f);
-int z7_decode(os_fd fd, const folder7 *f, wr_fn wr, void *wu); /* exactly f->usize bytes to wr */
+/* exactly f->usize bytes to wr; wr stops it once it has the first need of them (bounds the window) */
+int z7_decode(os_fd fd, const folder7 *f, uint64_t need, wr_fn wr, void *wu);
 void z7_free(z7 *z);
 
 /* ===================== formats.c: archive formats ===================== */
