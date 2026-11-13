@@ -1,103 +1,103 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="840" height="464" viewBox="0 0 840 464" role="img" aria-labelledby="title desc">
 <title id="title">slz benchmarks</title>
-<desc id="desc">DEFLATE decode (higher is better): slz 967 MB/s, libdeflate 1102 MB/s, zlib-ng 796 MB/s, zlib 462 MB/s; LZMA2 decode (higher is better): slz 147 MB/s, xz 153 MB/s; list 500k zip entries (lower is better): slz 97 ms, unzip 853 ms, Python 1959 ms, bsdtar 2805 ms, 7-Zip 4051 ms; extract silesia.zip (lower is better): slz 0.09 s, slz -j 1 0.26 s, bsdtar 0.34 s, Python 0.69 s, 7-Zip 0.82 s, unzip 1.15 s; extract silesia.tar.gz (lower is better): slz 0.27 s, bsdtar 0.38 s, pigz | tar 0.42 s, GNU tar 1.07 s; extract silesia-nonsolid.7z (lower is better): slz 0.70 s, slz -j 1 1.59 s, 7-Zip 1.57 s, bsdtar 1.58 s; extract silesia.7z (solid) (lower is better): slz 1.04 s, slz -j 1 1.55 s, 7-Zip 1.06 s, bsdtar 1.53 s. Measured 2026-11-13 by .github/workflows/bench.yml at slz 038d606 on GitHub Actions (Ubuntu 24.04.5 LTS, image 20261111.370.1; AMD EPYC 9V74, 4 threads). Archives: whole-process wall time, best of 3 runs, warm page cache; slz runs 4 threads, slz -j 1 one. Decoders: in memory over the Silesia corpus (212 MB), best of several runs. Versions: zlib 1.4, zlib-ng 2.3.3, libdeflate 1.26, xz 5.8.4, 7-Zip 26.06, bsdtar 3.8.11, unzip 6.00, GNU tar 1.35, pigz 2.8, Python 3.12.3.</desc>
+<desc id="desc">DEFLATE decode (higher is better): slz 960 MB/s, libdeflate 1102 MB/s, zlib-ng 796 MB/s, zlib 462 MB/s; LZMA2 decode (higher is better): slz 146 MB/s, xz 152 MB/s; list 500k zip entries (lower is better): slz 96 ms, unzip 860 ms, Python 2030 ms, bsdtar 2803 ms, 7-Zip 4039 ms; extract silesia.zip (lower is better): slz 0.10 s, slz -j 1 0.27 s, bsdtar 0.35 s, Python 0.69 s, 7-Zip 0.82 s, unzip 1.15 s; extract silesia.tar.gz (lower is better): slz 0.27 s, bsdtar 0.38 s, pigz | tar 0.42 s, GNU tar 1.08 s; extract silesia-nonsolid.7z (lower is better): slz 0.75 s, slz -j 1 1.71 s, 7-Zip 1.62 s, bsdtar 1.64 s; extract silesia.7z (solid) (lower is better): slz 1.11 s, slz -j 1 1.67 s, 7-Zip 1.10 s, bsdtar 1.64 s. Measured 2026-11-13 by .github/workflows/bench.yml at slz 8cd2f55 on GitHub Actions (Ubuntu 24.04.5 LTS, image 20261101.360.1; AMD EPYC 9V74, 4 threads). Archives: whole-process wall time, best of 3 runs, warm page cache; slz runs 4 threads, slz -j 1 one. Decoders: in memory over the Silesia corpus (212 MB), best of several runs. Versions: zlib 1.4, zlib-ng 2.3.3, libdeflate 1.26, xz 5.8.4, 7-Zip 26.06, bsdtar 3.8.11, unzip 6.00, GNU tar 1.35, pigz 2.8, Python 3.12.3.</desc>
 <style>text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif;font-variant-numeric:tabular-nums}</style>
 <rect x="0.5" y="0.5" width="271.0" height="172.0" fill="#f6f8fa" rx="6" stroke="#d1d9e0"/>
 <text x="12.5" y="22.5" font-size="13" fill="#1f2328" font-weight="600">List 500k-entry zip</text>
 <text x="12.5" y="38.5" font-size="11" fill="#59636e">wall time · lower is better</text>
-<text x="12.5" y="61.5" font-size="11"><tspan fill="#1a7f37" font-weight="600">8.8× faster than unzip</tspan></text>
+<text x="12.5" y="61.5" font-size="11"><tspan fill="#1a7f37" font-weight="600">8.9× faster than unzip</tspan></text>
 <text x="56.8" y="79.5" font-size="12" fill="#1f2328" font-weight="600" text-anchor="end">slz</text>
-<rect x="62.8" y="71.5" width="3.4" height="10.0" fill="#0969da" rx="2"><title>slz: 97 ms</title></rect>
-<text x="71.3" y="80.0" font-size="11" fill="#1f2328" font-weight="600">97 ms</text>
+<rect x="62.8" y="71.5" width="3.4" height="10.0" fill="#0969da" rx="2"><title>slz: 96 ms</title></rect>
+<text x="71.3" y="80.0" font-size="11" fill="#1f2328" font-weight="600">96 ms</text>
 <text x="56.8" y="95.5" font-size="12" fill="#1f2328" text-anchor="end">unzip</text>
-<rect x="62.8" y="87.5" width="30.4" height="10.0" fill="#afb8c1" rx="2"><title>unzip: 853 ms</title></rect>
-<text x="98.3" y="96.0" font-size="11" fill="#59636e">853 ms</text>
+<rect x="62.8" y="87.5" width="30.8" height="10.0" fill="#afb8c1" rx="2"><title>unzip: 860 ms</title></rect>
+<text x="98.6" y="96.0" font-size="11" fill="#59636e">860 ms</text>
 <text x="56.8" y="111.5" font-size="12" fill="#1f2328" text-anchor="end">Python</text>
-<rect x="62.8" y="103.5" width="69.9" height="10.0" fill="#afb8c1" rx="2"><title>Python: 1959 ms</title></rect>
-<text x="137.7" y="112.0" font-size="11" fill="#59636e">1959 ms</text>
+<rect x="62.8" y="103.5" width="72.6" height="10.0" fill="#afb8c1" rx="2"><title>Python: 2030 ms</title></rect>
+<text x="140.4" y="112.0" font-size="11" fill="#59636e">2030 ms</text>
 <text x="56.8" y="127.5" font-size="12" fill="#1f2328" text-anchor="end">bsdtar</text>
-<rect x="62.8" y="119.5" width="100.0" height="10.0" fill="#afb8c1" rx="2"><title>bsdtar: 2805 ms</title></rect>
-<text x="167.9" y="128.0" font-size="11" fill="#59636e">2805 ms</text>
+<rect x="62.8" y="119.5" width="100.3" height="10.0" fill="#afb8c1" rx="2"><title>bsdtar: 2803 ms</title></rect>
+<text x="168.1" y="128.0" font-size="11" fill="#59636e">2803 ms</text>
 <text x="56.8" y="143.5" font-size="12" fill="#1f2328" text-anchor="end">7-Zip</text>
-<rect x="62.8" y="135.5" width="144.5" height="10.0" fill="#afb8c1" rx="2"><title>7-Zip: 4051 ms</title></rect>
-<text x="212.3" y="144.0" font-size="11" fill="#59636e">4051 ms</text>
+<rect x="62.8" y="135.5" width="144.5" height="10.0" fill="#afb8c1" rx="2"><title>7-Zip: 4039 ms</title></rect>
+<text x="212.3" y="144.0" font-size="11" fill="#59636e">4039 ms</text>
 <rect x="284.5" y="0.5" width="271.0" height="172.0" fill="#f6f8fa" rx="6" stroke="#d1d9e0"/>
 <text x="296.5" y="22.5" font-size="13" fill="#1f2328" font-weight="600">Extract silesia.zip</text>
 <text x="296.5" y="38.5" font-size="11" fill="#59636e">wall time · lower is better</text>
 <text x="296.5" y="61.5" font-size="11"><tspan fill="#1a7f37" font-weight="600">3.6× faster than bsdtar</tspan></text>
 <text x="358.1" y="79.5" font-size="12" fill="#1f2328" font-weight="600" text-anchor="end">slz</text>
-<rect x="364.1" y="71.5" width="11.1" height="10.0" fill="#0969da" rx="2"><title>slz: 0.09 s</title></rect>
-<text x="380.2" y="80.0" font-size="11" fill="#1f2328" font-weight="600">0.09 s</text>
+<rect x="364.1" y="71.5" width="11.3" height="10.0" fill="#0969da" rx="2"><title>slz: 0.10 s</title></rect>
+<text x="380.4" y="80.0" font-size="11" fill="#1f2328" font-weight="600">0.10 s</text>
 <text x="358.1" y="95.5" font-size="12" fill="#1f2328" font-weight="600" text-anchor="end">slz -j 1</text>
-<rect x="364.1" y="87.5" width="30.5" height="10.0" fill="#0969da" rx="2" fill-opacity="0.55"><title>slz -j 1: 0.26 s</title></rect>
-<text x="399.6" y="96.0" font-size="11" fill="#1f2328" font-weight="600">0.26 s</text>
+<rect x="364.1" y="87.5" width="31.0" height="10.0" fill="#0969da" rx="2" fill-opacity="0.55"><title>slz -j 1: 0.27 s</title></rect>
+<text x="400.1" y="96.0" font-size="11" fill="#1f2328" font-weight="600">0.27 s</text>
 <text x="358.1" y="111.5" font-size="12" fill="#1f2328" text-anchor="end">bsdtar</text>
-<rect x="364.1" y="103.5" width="40.1" height="10.0" fill="#afb8c1" rx="2"><title>bsdtar: 0.34 s</title></rect>
-<text x="409.2" y="112.0" font-size="11" fill="#59636e">0.34 s</text>
+<rect x="364.1" y="103.5" width="40.2" height="10.0" fill="#afb8c1" rx="2"><title>bsdtar: 0.35 s</title></rect>
+<text x="409.3" y="112.0" font-size="11" fill="#59636e">0.35 s</text>
 <text x="358.1" y="127.5" font-size="12" fill="#1f2328" text-anchor="end">Python</text>
-<rect x="364.1" y="119.5" width="80.6" height="10.0" fill="#afb8c1" rx="2"><title>Python: 0.69 s</title></rect>
-<text x="449.7" y="128.0" font-size="11" fill="#59636e">0.69 s</text>
+<rect x="364.1" y="119.5" width="79.8" height="10.0" fill="#afb8c1" rx="2"><title>Python: 0.69 s</title></rect>
+<text x="448.9" y="128.0" font-size="11" fill="#59636e">0.69 s</text>
 <text x="358.1" y="143.5" font-size="12" fill="#1f2328" text-anchor="end">7-Zip</text>
-<rect x="364.1" y="135.5" width="95.3" height="10.0" fill="#afb8c1" rx="2"><title>7-Zip: 0.82 s</title></rect>
-<text x="464.4" y="144.0" font-size="11" fill="#59636e">0.82 s</text>
+<rect x="364.1" y="135.5" width="95.4" height="10.0" fill="#afb8c1" rx="2"><title>7-Zip: 0.82 s</title></rect>
+<text x="464.5" y="144.0" font-size="11" fill="#59636e">0.82 s</text>
 <text x="358.1" y="159.5" font-size="12" fill="#1f2328" text-anchor="end">unzip</text>
 <rect x="364.1" y="151.5" width="133.8" height="10.0" fill="#afb8c1" rx="2"><title>unzip: 1.15 s</title></rect>
 <text x="502.9" y="160.0" font-size="11" fill="#59636e">1.15 s</text>
 <rect x="568.5" y="0.5" width="271.0" height="172.0" fill="#f6f8fa" rx="6" stroke="#d1d9e0"/>
 <text x="580.5" y="22.5" font-size="13" fill="#1f2328" font-weight="600">Extract silesia.tar.gz</text>
 <text x="580.5" y="38.5" font-size="11" fill="#59636e">wall time · lower is better</text>
-<text x="580.5" y="61.5" font-size="11"><tspan fill="#1a7f37" font-weight="600">1.41× faster than bsdtar</tspan></text>
+<text x="580.5" y="61.5" font-size="11"><tspan fill="#1a7f37" font-weight="600">1.39× faster than bsdtar</tspan></text>
 <text x="651.7" y="79.5" font-size="12" fill="#1f2328" font-weight="600" text-anchor="end">slz</text>
-<rect x="657.7" y="71.5" width="31.2" height="10.0" fill="#0969da" rx="2"><title>slz: 0.27 s</title></rect>
-<text x="693.9" y="80.0" font-size="11" fill="#1f2328" font-weight="600">0.27 s</text>
+<rect x="657.7" y="71.5" width="31.4" height="10.0" fill="#0969da" rx="2"><title>slz: 0.27 s</title></rect>
+<text x="694.1" y="80.0" font-size="11" fill="#1f2328" font-weight="600">0.27 s</text>
 <text x="651.7" y="95.5" font-size="12" fill="#1f2328" text-anchor="end">bsdtar</text>
-<rect x="657.7" y="87.5" width="43.9" height="10.0" fill="#afb8c1" rx="2"><title>bsdtar: 0.38 s</title></rect>
-<text x="706.6" y="96.0" font-size="11" fill="#59636e">0.38 s</text>
+<rect x="657.7" y="87.5" width="43.5" height="10.0" fill="#afb8c1" rx="2"><title>bsdtar: 0.38 s</title></rect>
+<text x="706.2" y="96.0" font-size="11" fill="#59636e">0.38 s</text>
 <text x="651.7" y="111.5" font-size="12" fill="#1f2328" text-anchor="end">pigz | tar</text>
-<rect x="657.7" y="103.5" width="49.1" height="10.0" fill="#afb8c1" rx="2"><title>pigz | tar: 0.42 s</title></rect>
-<text x="711.8" y="112.0" font-size="11" fill="#59636e">0.42 s</text>
+<rect x="657.7" y="103.5" width="48.5" height="10.0" fill="#afb8c1" rx="2"><title>pigz | tar: 0.42 s</title></rect>
+<text x="711.2" y="112.0" font-size="11" fill="#59636e">0.42 s</text>
 <text x="651.7" y="127.5" font-size="12" fill="#1f2328" text-anchor="end">GNU tar</text>
-<rect x="657.7" y="119.5" width="124.2" height="10.0" fill="#afb8c1" rx="2"><title>GNU tar: 1.07 s</title></rect>
-<text x="786.9" y="128.0" font-size="11" fill="#59636e">1.07 s</text>
+<rect x="657.7" y="119.5" width="124.2" height="10.0" fill="#afb8c1" rx="2"><title>GNU tar: 1.08 s</title></rect>
+<text x="786.9" y="128.0" font-size="11" fill="#59636e">1.08 s</text>
 <rect x="0.5" y="184.5" width="271.0" height="196.0" fill="#f6f8fa" rx="6" stroke="#d1d9e0"/>
 <text x="12.5" y="206.5" font-size="13" fill="#1f2328" font-weight="600">Extract 7z, non-solid</text>
 <text x="12.5" y="222.5" font-size="11" fill="#59636e">wall time · lower is better</text>
 <text x="12.5" y="245.5" font-size="11"><tspan fill="#1a7f37" font-weight="600">2.2× faster than 7-Zip</tspan></text>
 <text x="74.1" y="263.5" font-size="12" fill="#1f2328" font-weight="600" text-anchor="end">slz</text>
-<rect x="80.1" y="255.5" width="58.7" height="10.0" fill="#0969da" rx="2"><title>slz: 0.70 s</title></rect>
-<text x="143.8" y="264.0" font-size="11" fill="#1f2328" font-weight="600">0.70 s</text>
+<rect x="80.1" y="255.5" width="59.0" height="10.0" fill="#0969da" rx="2"><title>slz: 0.75 s</title></rect>
+<text x="144.1" y="264.0" font-size="11" fill="#1f2328" font-weight="600">0.75 s</text>
 <text x="74.1" y="279.5" font-size="12" fill="#1f2328" font-weight="600" text-anchor="end">slz -j 1</text>
-<rect x="80.1" y="271.5" width="133.8" height="10.0" fill="#0969da" rx="2" fill-opacity="0.55"><title>slz -j 1: 1.59 s</title></rect>
-<text x="218.9" y="280.0" font-size="11" fill="#1f2328" font-weight="600">1.59 s</text>
+<rect x="80.1" y="271.5" width="133.8" height="10.0" fill="#0969da" rx="2" fill-opacity="0.55"><title>slz -j 1: 1.71 s</title></rect>
+<text x="218.9" y="280.0" font-size="11" fill="#1f2328" font-weight="600">1.71 s</text>
 <text x="74.1" y="295.5" font-size="12" fill="#1f2328" text-anchor="end">7-Zip</text>
-<rect x="80.1" y="287.5" width="132.1" height="10.0" fill="#afb8c1" rx="2"><title>7-Zip: 1.57 s</title></rect>
-<text x="217.2" y="296.0" font-size="11" fill="#59636e">1.57 s</text>
+<rect x="80.1" y="287.5" width="126.9" height="10.0" fill="#afb8c1" rx="2"><title>7-Zip: 1.62 s</title></rect>
+<text x="212.0" y="296.0" font-size="11" fill="#59636e">1.62 s</text>
 <text x="74.1" y="311.5" font-size="12" fill="#1f2328" text-anchor="end">bsdtar</text>
-<rect x="80.1" y="303.5" width="133.3" height="10.0" fill="#afb8c1" rx="2"><title>bsdtar: 1.58 s</title></rect>
-<text x="218.4" y="312.0" font-size="11" fill="#59636e">1.58 s</text>
+<rect x="80.1" y="303.5" width="128.3" height="10.0" fill="#afb8c1" rx="2"><title>bsdtar: 1.64 s</title></rect>
+<text x="213.4" y="312.0" font-size="11" fill="#59636e">1.64 s</text>
 <rect x="284.5" y="184.5" width="271.0" height="196.0" fill="#f6f8fa" rx="6" stroke="#d1d9e0"/>
 <text x="296.5" y="206.5" font-size="13" fill="#1f2328" font-weight="600">Extract 7z, solid</text>
 <text x="296.5" y="222.5" font-size="11" fill="#59636e">wall time · lower is better</text>
-<text x="296.5" y="245.5" font-size="11"><tspan fill="#1a7f37" font-weight="600">1.02× faster than 7-Zip</tspan></text>
+<text x="296.5" y="245.5" font-size="11"><tspan fill="#59636e">on par with 7-Zip</tspan></text>
 <text x="358.1" y="263.5" font-size="12" fill="#1f2328" font-weight="600" text-anchor="end">slz</text>
-<rect x="364.1" y="255.5" width="89.6" height="10.0" fill="#0969da" rx="2"><title>slz: 1.04 s</title></rect>
-<text x="458.7" y="264.0" font-size="11" fill="#1f2328" font-weight="600">1.04 s</text>
+<rect x="364.1" y="255.5" width="89.0" height="10.0" fill="#0969da" rx="2"><title>slz: 1.11 s</title></rect>
+<text x="458.1" y="264.0" font-size="11" fill="#1f2328" font-weight="600">1.11 s</text>
 <text x="358.1" y="279.5" font-size="12" fill="#1f2328" font-weight="600" text-anchor="end">slz -j 1</text>
-<rect x="364.1" y="271.5" width="133.8" height="10.0" fill="#0969da" rx="2" fill-opacity="0.55"><title>slz -j 1: 1.55 s</title></rect>
-<text x="502.9" y="280.0" font-size="11" fill="#1f2328" font-weight="600">1.55 s</text>
+<rect x="364.1" y="271.5" width="133.8" height="10.0" fill="#0969da" rx="2" fill-opacity="0.55"><title>slz -j 1: 1.67 s</title></rect>
+<text x="502.9" y="280.0" font-size="11" fill="#1f2328" font-weight="600">1.67 s</text>
 <text x="358.1" y="295.5" font-size="12" fill="#1f2328" text-anchor="end">7-Zip</text>
-<rect x="364.1" y="287.5" width="91.6" height="10.0" fill="#afb8c1" rx="2"><title>7-Zip: 1.06 s</title></rect>
-<text x="460.7" y="296.0" font-size="11" fill="#59636e">1.06 s</text>
+<rect x="364.1" y="287.5" width="88.3" height="10.0" fill="#afb8c1" rx="2"><title>7-Zip: 1.10 s</title></rect>
+<text x="457.4" y="296.0" font-size="11" fill="#59636e">1.10 s</text>
 <text x="358.1" y="311.5" font-size="12" fill="#1f2328" text-anchor="end">bsdtar</text>
-<rect x="364.1" y="303.5" width="131.7" height="10.0" fill="#afb8c1" rx="2"><title>bsdtar: 1.53 s</title></rect>
-<text x="500.8" y="312.0" font-size="11" fill="#59636e">1.53 s</text>
+<rect x="364.1" y="303.5" width="131.7" height="10.0" fill="#afb8c1" rx="2"><title>bsdtar: 1.64 s</title></rect>
+<text x="500.8" y="312.0" font-size="11" fill="#59636e">1.64 s</text>
 <rect x="568.5" y="184.5" width="271.0" height="196.0" fill="#f6f8fa" rx="6" stroke="#d1d9e0"/>
 <text x="580.5" y="206.5" font-size="13" fill="#1f2328" font-weight="600">Decode in memory</text>
 <text x="580.5" y="222.5" font-size="11" fill="#59636e">MB/s of output · higher is better</text>
-<text x="580.5" y="245.5" font-size="11"><tspan fill="#1f2328" font-weight="600">DEFLATE</tspan><tspan fill="#cf222e" dx="6" font-weight="600">1.14× slower than libdeflate</tspan></text>
+<text x="580.5" y="245.5" font-size="11"><tspan fill="#1f2328" font-weight="600">DEFLATE</tspan><tspan fill="#cf222e" dx="6" font-weight="600">1.15× slower than libdeflate</tspan></text>
 <text x="651.7" y="263.5" font-size="12" fill="#1f2328" font-weight="600" text-anchor="end">slz</text>
-<rect x="657.7" y="255.5" width="91.6" height="10.0" fill="#0969da" rx="2"><title>slz: 967 MB/s</title></rect>
-<text x="754.3" y="264.0" font-size="11" fill="#1f2328" font-weight="600">967 MB/s</text>
+<rect x="657.7" y="255.5" width="90.9" height="10.0" fill="#0969da" rx="2"><title>slz: 960 MB/s</title></rect>
+<text x="753.6" y="264.0" font-size="11" fill="#1f2328" font-weight="600">960 MB/s</text>
 <text x="651.7" y="279.5" font-size="12" fill="#1f2328" text-anchor="end">libdeflate</text>
 <rect x="657.7" y="271.5" width="104.4" height="10.0" fill="#afb8c1" rx="2"><title>libdeflate: 1102 MB/s</title></rect>
 <text x="767.1" y="280.0" font-size="11" fill="#59636e">1102 MB/s</text>
@@ -109,12 +109,12 @@
 <text x="706.5" y="312.0" font-size="11" fill="#59636e">462 MB/s</text>
 <text x="580.5" y="333.5" font-size="11"><tspan fill="#1f2328" font-weight="600">LZMA2</tspan><tspan fill="#cf222e" dx="6" font-weight="600">1.04× slower than xz</tspan></text>
 <text x="651.7" y="351.5" font-size="12" fill="#1f2328" font-weight="600" text-anchor="end">slz</text>
-<rect x="657.7" y="343.5" width="100.3" height="10.0" fill="#0969da" rx="2"><title>slz: 147 MB/s</title></rect>
-<text x="763.0" y="352.0" font-size="11" fill="#1f2328" font-weight="600">147 MB/s</text>
+<rect x="657.7" y="343.5" width="100.3" height="10.0" fill="#0969da" rx="2"><title>slz: 146 MB/s</title></rect>
+<text x="763.0" y="352.0" font-size="11" fill="#1f2328" font-weight="600">146 MB/s</text>
 <text x="651.7" y="367.5" font-size="12" fill="#1f2328" text-anchor="end">xz</text>
-<rect x="657.7" y="359.5" width="104.4" height="10.0" fill="#afb8c1" rx="2"><title>xz: 153 MB/s</title></rect>
-<text x="767.1" y="368.0" font-size="11" fill="#59636e">153 MB/s</text>
-<text x="1.0" y="397.5" font-size="11" fill="#59636e">Measured 2026-11-13 by .github/workflows/bench.yml at slz 038d606 on GitHub Actions (Ubuntu 24.04.5 LTS, image 20261111.370.1; AMD EPYC 9V74, 4</text>
+<rect x="657.7" y="359.5" width="104.4" height="10.0" fill="#afb8c1" rx="2"><title>xz: 152 MB/s</title></rect>
+<text x="767.1" y="368.0" font-size="11" fill="#59636e">152 MB/s</text>
+<text x="1.0" y="397.5" font-size="11" fill="#59636e">Measured 2026-11-13 by .github/workflows/bench.yml at slz 8cd2f55 on GitHub Actions (Ubuntu 24.04.5 LTS, image 20261101.360.1; AMD EPYC 9V74, 4</text>
 <text x="1.0" y="412.5" font-size="11" fill="#59636e">threads).</text>
 <text x="1.0" y="427.5" font-size="11" fill="#59636e">Archives: whole-process wall time, best of 3 runs, warm page cache; slz runs 4 threads, slz -j 1 one. Decoders: in memory over the Silesia corpus</text>
 <text x="1.0" y="442.5" font-size="11" fill="#59636e">(212 MB), best of several runs.</text>
