@@ -24,5 +24,8 @@ journal identity that did not include the file's identity; a corrupted 7z AES me
 output stream chosen for undecodable 7z coder chains; and an undefined sequence point in the LZMA
 output macro.
 
-The CI workflow ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs all of this on Linux x86-64 and arm64 (GCC, Clang),
-macOS arm64, Windows (MSVC, clang-cl), FreeBSD 14 and WASI.
+The CI workflow ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) builds with `SLZ_FAULT_INJECTION` and runs the
+`ctest` suite on Linux x86-64 (GCC, Clang), Linux arm64 (GCC), macOS arm64 (Clang), Windows (MSVC,
+clang-cl) and FreeBSD 14.2. Only the Linux and macOS jobs build with ASan + UBSan. The WASI job
+builds for wasm32-wasip1 and runs one round-trip smoke test under Node (a small zip, extracted and
+compared), not the suite.
