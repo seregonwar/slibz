@@ -366,15 +366,13 @@ INF_INLINE int codes(inf *s) {
     const uint32_t *dt = s->dt;
 #define SAVE()     (s->bb = bb, s->bn = bn, s->p = p, s->op = op)
 #define LOAD()     (bb = s->bb, bn = s->bn, p = s->p, pe = s->e, op = s->op)
-/* (uint8_t) shift counts instead of & 63: x86 shrx / arm64 lsr take the count unmasked, and
- * bzhi (BMI2 mask) uses exactly the low byte */
 #define CONSUME(x) (bb >>= (uint8_t)(x), bn -= (x)) /* fast loop: only (u8)bn is valid */
 #define REFILL()   (bb |= ld64(p) << (bn & 63), p += 7 - (bn >> 3 & 7), bn |= 56)
 #define CONSUMEX(x) (bb >>= (x) & 63, bn -= (x) & 63)
-#define EXTRA(x)   ((unsigned)((sv & ((1ull << (uint8_t)(x)) - 1)) >> (uint8_t)((x) >> 8)))
-#if defined(__GNUC__) || defined(__clang__)
-    /* opaque copy: the distance table base stays in a register (on arm64 its offset from s is
-     * beyond the load immediate range, so it would otherwise be added on every lookup) */
+#define EXTRA(x)   ((unsigned)((sv & ((1ull << (uint8_t)(x)) - 1)) >> ((x) >> 8 & 63)))
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__aarch64__)
+    /* opaque copy: keeps the distance table base in a register (its offset from s is beyond
+     * the arm64 load immediate range, so it would otherwise be added on every lookup) */
     __asm__("" : "+r"(dt));
 #endif
     for (;;) {
@@ -449,12 +447,14 @@ INF_INLINE int codes(inf *s) {
                 }
                 len = (e >> 16) + EXTRA(e);
                 e = dt[bb & DTM];
-                if ((uint8_t)bn < 28 + LT_BITS) REFILL();
                 if (UNLIKELY(e & EXC)) {
+                    if ((uint8_t)bn < 28 + LT_BITS) REFILL();
                     if (!(e & SUB)) return SLZ_E_CORRUPT;
                     CONSUME(e);
                     e = dt[(e >> 16) + ((unsigned)bb & ((1u << (e >> 8 & 15)) - 1))];
                     if (e & EXC) return SLZ_E_CORRUPT;
+                } else if ((uint8_t)bn < 21 + LT_BITS) { /* primary-table distance: <= 8 + 13 bits */
+                    REFILL();
                 }
                 sv = bb;
                 CONSUME(e);
