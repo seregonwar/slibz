@@ -26,16 +26,16 @@ if [ "$arch" = x86_64 ] && [ "$job" = gcc ]; then
     r bench gcc -O3
     r bench clang -O3
     r bench gcc -O3 -march=x86-64
-    CC=gcc r fuzz "$ITERS" 1 2
-    CC=gcc FUZZ_CFLAGS="-march=x86-64 -DSLZ_NO_BMI2" r fuzz "$ITERS" 5
+    CC=gcc FUZZ_V=zc r fuzz "$ITERS" 1 2
+    CC=gcc FUZZ_V=zc FUZZ_CFLAGS="-march=x86-64 -DSLZ_NO_BMI2" r fuzz "$ITERS" 5
 elif [ "$arch" = x86_64 ]; then
     r bench clang -O3
     r bench gcc -O3
     r bench clang -O3 -march=x86-64 -DSLZ_NO_BMI2
-    CC=clang r fuzz "$ITERS" 3 4
+    CC=clang FUZZ_V=zc r fuzz "$ITERS" 3 4
 else
     r bench gcc -O3
     r bench clang -O3
-    CC=gcc r fuzz "$ITERS" 7 8
+    CC=gcc FUZZ_V=zc r fuzz "$ITERS" 7 8
 fi
 echo "== bench/ci.sh done ($((SECONDS / 60))m$((SECONDS % 60))s)"

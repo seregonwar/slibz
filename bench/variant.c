@@ -17,3 +17,9 @@ int CAT(VPFX, decode)(void *z, rd_fn rdf, wr_fn wrf, void *u) {
     s->ru = s->wu = u;
     return inf_run(s);
 }
+#ifdef VDIRECT /* the variant has slz_inflate (in memory, zero-copy; renamed v_<name>_inflate) */
+int CAT(VPFX, direct)(const uint8_t *c, size_t cn, uint8_t *o, size_t cap, size_t *got);
+int CAT(VPFX, direct)(const uint8_t *c, size_t cn, uint8_t *o, size_t cap, size_t *got) {
+    return slz_inflate(c, cn, o, cap, NULL, got);
+}
+#endif

@@ -100,18 +100,27 @@ variants() {
     done < bench/variants.txt
 }
 
+hasdirect() { grep -q slz_inflate "v/$1/include/slz.h"; }
+
 vh() { # variants.h for the given variant names
     local n
     echo '#include <stddef.h>'
     echo '#include <stdint.h>'
     echo 'typedef int64_t (*rd_fn)(void *u, uint8_t *b, size_t n);'
     echo 'typedef int (*wr_fn)(void *u, const uint8_t *p, size_t n);'
-    for n in "$@"; do echo "void *v_${n}_new(void); int v_${n}_decode(void *, rd_fn, wr_fn, void *);"; done
+    echo 'typedef int (*dir_fn)(const uint8_t *c, size_t cn, uint8_t *o, size_t cap, size_t *got);'
+    for n in "$@"; do
+        echo "void *v_${n}_new(void); int v_${n}_decode(void *, rd_fn, wr_fn, void *);"
+        if hasdirect "$n"; then echo "int v_${n}_direct(const uint8_t *, size_t, uint8_t *, size_t, size_t *);"; fi
+    done
     echo "#define NV $#"
     echo "static const char *const vname[NV] = {$(for n in "$@"; do printf '"%s", ' "$n"; done)};"
     echo "static void *(*const vnew[NV])(void) = {$(for n in "$@"; do printf 'v_%s_new, ' "$n"; done)};"
     echo "static int (*const vdec[NV])(void *, rd_fn, wr_fn, void *) = {$(for n in "$@"; do
         printf 'v_%s_decode, ' "$n"
+    done)};"
+    echo "static const dir_fn vdir[NV] = {$(for n in "$@"; do
+        if hasdirect "$n"; then printf 'v_%s_direct, ' "$n"; else printf '0, '; fi
     done)};"
 }
 
@@ -122,7 +131,7 @@ objdir() { # cc flags... -> obj/<tag>
 bench() {
     local cc=$1
     shift
-    local flags="$*" tag o pre=$PWD/deps/$cc n p bad names
+    local flags="$*" tag o pre=$PWD/deps/$cc n p bad names dflags
     names=$(cat v/order)
     tag=$(echo "$cc $flags" | tr -s ' ' '_')
     o=$(objdir "$cc" "$flags")
@@ -132,9 +141,11 @@ bench() {
     echo "== $cc $flags: $($cc --version | sed -n 1p)"
     for n in $names; do
         p=v_${n}_
+        dflags=
+        if hasdirect "$n"; then dflags="-DVDIRECT -Dslz_inflate=${p}inflate"; fi
         # shellcheck disable=SC2086
         $cc $flags $WARN -DNDEBUG -DVPFX="$p" -Dslz_i_inf_new="${p}inf_new" -Dslz_i_inf_reset="${p}inf_reset" \
-            -Dslz_i_inf_run="${p}inf_run" -Dslz_i_inf_flush="${p}inf_flush" -I"v/$n/src" -I"v/$n/include" \
+            -Dslz_i_inf_run="${p}inf_run" -Dslz_i_inf_flush="${p}inf_flush" $dflags -I"v/$n/src" -I"v/$n/include" \
             -c bench/variant.c -o "$o/$n.o"
         bad=$(nm -g --defined-only "$o/$n.o" | awk '{print $3}' | grep -v "^$p" || true)
         [ -z "$bad" ] || { echo "variant $n exports unprefixed symbols: $bad"; exit 1; }
@@ -253,18 +264,20 @@ disasm() { # cc flags...: disassembly of the first variant's hot loops (to compa
 fuzz() {
     local iters=$1
     shift
-    local cc=${CC:-gcc} o=obj/fuzz n s fail=0 first ref rc t0=$SECONDS
+    local cc=${CC:-gcc} o=obj/fuzz n s fail=0 first ref rc t0=$SECONDS vs
     local pre=$PWD/deps/${CC:-gcc}
+    vs=${FUZZ_V:-$(cat v/order)} # variants to fuzz (tests/fuzz_inflate.c must build against each)
+    first=${vs%%[[:space:]]*}
     mkdir -p "$o" out
-    echo "fuzz: $cc ${FUZZ_CFLAGS:-}, $iters iterations, seeds $*, reference zlib from deps/$cc"
-    for n in $(cat v/order); do
+    echo "fuzz: $cc ${FUZZ_CFLAGS:-}, $iters iterations, seeds $*, variants $(echo $vs), reference zlib from deps/$cc"
+    for n in $vs; do
         # shellcheck disable=SC2086
         $cc -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
             ${FUZZ_CFLAGS:-} -I"v/$n/include" -I"v/$n/src" -I"$pre/include" tests/fuzz_inflate.c \
             "v/$n/src/inflate.c" "$pre/lib/libz.a" -o "$o/fuzz_$n"
     done
     for s in "$@"; do
-        for n in $(cat v/order); do
+        for n in $vs; do
             (
                 set +e
                 "$o/fuzz_$n" "$iters" "$s" > "out/$n.$s.txt" 2> "out/$n.$s.err"
@@ -273,10 +286,9 @@ fuzz() {
         done
     done
     wait
-    first=$(head -1 v/order)
     for s in "$@"; do
         ref=$(cat "out/$first.$s.txt")
-        for n in $(cat v/order); do
+        for n in $vs; do
             rc=$(cat "out/$n.$s.rc")
             echo "seed $s $n (exit $rc): $(cat "out/$n.$s.txt")"
             if [ "$rc" != 0 ]; then
