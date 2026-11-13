@@ -2,6 +2,7 @@
  * Copyright (c) 2026 Seregon. SPDX-License-Identifier: MIT
  *
  *   slz-test unit                          sanitizer + tree listing unit tests
+ *   slz-test list <archive>                one line per entry: data offset, usize, name
  *   slz-test resume <archive> <dest> <KiB> [checkpoint_KiB] destructive extraction, cancelled every <KiB> of
  *                                          output and resumed until done (simulated crashes);
  *                                          prints the peak on-disk size of the archive. */
@@ -196,6 +197,35 @@ static void test_journal(void) {
 #endif
 }
 
+static int no_child(void *u, const char *name, size_t len, int is_dir, long long idx) {
+    (void)u;
+    (void)name;
+    (void)len;
+    (void)is_dir;
+    (void)idx;
+    return 0;
+}
+
+/* the fields the CLI listing leaves out */
+static int list(const char *archive) {
+    int err;
+    size_t i, n;
+    slz_archive *a = slz_open(archive, &err);
+    if (!a) {
+        fprintf(stderr, "open: %s\n", slz_strerror(err));
+        return 1;
+    }
+    n = slz_count(a);
+    err = n ? 0 : slz_dir(a, "", no_child, NULL); /* surfaces a failed tar.gz index */
+    for (i = 0; i < n; i++) {
+        const slz_entry *e = slz_get(a, i);
+        printf("%llu %llu %s\n", (unsigned long long)e->off, (unsigned long long)e->usize, e->name);
+    }
+    if (err) fprintf(stderr, "list: %s\n", slz_strerror(err));
+    slz_close(a);
+    return err != 0;
+}
+
 int main(int argc, char **argv) {
     if (argc >= 2 && !strcmp(argv[1], "unit")) {
         test_sanitize();
@@ -204,9 +234,10 @@ int main(int argc, char **argv) {
         printf("%s\n", fails ? "unit: FAILED" : "unit: ok");
         return fails != 0;
     }
+    if (argc == 3 && !strcmp(argv[1], "list")) return list(argv[2]);
     if ((argc == 5 || argc == 6) && !strcmp(argv[1], "resume"))
         return resume(argv[2], argv[3], (uint64_t)atoll(argv[4]) << 10,
                       argc == 6 ? (uint64_t)atoll(argv[5]) << 10 : 0);
-    fprintf(stderr, "usage: slz-test unit | resume <archive> <dest> <KiB> [checkpoint_KiB]\n");
+    fprintf(stderr, "usage: slz-test unit | list <archive> | resume <archive> <dest> <KiB> [checkpoint_KiB]\n");
     return 2;
 }

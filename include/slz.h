@@ -38,7 +38,8 @@ typedef struct {
     uint16_t method;            /* 0 store, 8 deflate */
     uint32_t mode, crc;         /* unix permission bits (0 if unknown) */
     int64_t mtime;              /* unix seconds */
-    uint64_t usize, csize, off; /* off: zip local header / tar,gz data / 7z packed stream offset */
+    uint64_t usize, csize, off; /* off: zip local header / tar,gz data / 7z packed stream offset
+                                 * (tar.gz: data offset in the decompressed tar stream) */
 } slz_entry;
 
 typedef struct slz_archive slz_archive;

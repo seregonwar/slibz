@@ -45,6 +45,17 @@ def tree(root):
     return out
 
 
+def listing(arc):
+    """name -> (data offset, usize), from slz-test list"""
+    r = subprocess.run([TESTER, "list", arc], capture_output=True)
+    check(r.returncode == 0, f"slz-test list {arc}: {r.stderr.decode(errors='replace').strip()}")
+    out = {}
+    for line in r.stdout.decode("utf-8", "surrogateescape").splitlines():
+        off, usize, name = line.split(" ", 2)
+        out[name] = (int(off), int(usize))
+    return out
+
+
 def make_corpus(root):
     rnd = random.Random(42)
     files = {
@@ -284,6 +295,12 @@ def main():
                 ref["noname.txt.gz"] = hashlib.sha256(open(p, "rb").read()).hexdigest()
             check(tree(dst) == ref, f"FNAME-less gzip {extra}: got {sorted(tree(dst))}")
             shutil.rmtree(dst)
+
+        # tar.gz entry offsets are positions in the decompressed tar stream: pax.tar.gz wraps the same tar
+        # stream as pax.tar, so every entry, including those after the multi-MiB ones, has the same offset
+        t, tz = listing(arcs["pax.tar"]), listing(arcs["pax.tar.gz"])
+        check(t == tz, f"tar.gz offsets differ from the plain tar: {[(k, t[k], tz.get(k)) for k in t if t[k] != tz.get(k)][:3]}")
+        check(sum(o > 8 << 20 for o, _ in t.values()) > 1, "corpus too small to span several inflate chunks")
 
         # 2. existing files are not overwritten unless -o
         dst = os.path.join(work, "exist")
