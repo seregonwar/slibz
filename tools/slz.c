@@ -40,7 +40,8 @@ static int usage(void) {
     fprintf(stderr, "usage: slz l <archive> [dir]\n"
                     "       slz x <archive> <dest> [-o] [-d] [-n] [-q] [-j threads] [-c checkpoint_MiB]\n"
                     "       slz a <archive.slz> <file|dir>... [-l zstd_level] [-b block_MiB] [-j threads]\n"
-                    "             [--lz4 | --store] [--no-dedup] [-q]\n");
+                    "             [--lz4 | --store] [--no-dedup] [-q]\n"
+                    "       slz --version\n");
     return 2;
 }
 
@@ -95,6 +96,10 @@ int main(int argc, char **argv) {
     slz_archive *a;
     int err = 0, i, quiet = 0;
     double t0;
+    if (argc == 2 && (!strcmp(argv[1], "--version") || !strcmp(argv[1], "-V"))) {
+        printf("slz %s\n", slz_version_string());
+        return 0;
+    }
     if (argc >= 3 && !strcmp(argv[1], "a")) return create(argc, argv);
     if (argc < 3 || (strcmp(argv[1], "l") && strcmp(argv[1], "x"))) return usage();
 

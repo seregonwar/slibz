@@ -915,6 +915,13 @@ int slz_dir(slz_archive *a, const char *dir, slz_dir_cb cb, void *user) {
     return 0;
 }
 
+unsigned slz_version_number(void) {
+    return SLZ_VERSION_NUMBER;
+}
+const char *slz_version_string(void) {
+    return SLZ_VERSION_STRING;
+}
+
 const char *slz_strerror(int e) {
     static const char *m[] = {"ok",
                               "I/O error",

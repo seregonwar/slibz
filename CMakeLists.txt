@@ -1,6 +1,12 @@
 # slz - Copyright (c) 2026 Seregon. SPDX-License-Identifier: MIT
 cmake_minimum_required(VERSION 3.18)
-project(slz VERSION 0.1.0 LANGUAGES C)
+# the version is defined once, in include/slz.h (SLZ_VERSION_MAJOR / MINOR / PATCH)
+file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/include/slz.h _slz_v REGEX "^#define SLZ_VERSION_(MAJOR|MINOR|PATCH) +[0-9]+")
+foreach(_p MAJOR MINOR PATCH)
+  string(REGEX MATCH "SLZ_VERSION_${_p} +([0-9]+)" _m "${_slz_v}")
+  set(_slz_${_p} ${CMAKE_MATCH_1})
+endforeach()
+project(slz VERSION ${_slz_MAJOR}.${_slz_MINOR}.${_slz_PATCH} LANGUAGES C)
 
 option(SLZ_ASM "Use assembly CRC32 fast paths (GCC/Clang toolchains)" ON)
 option(SLZ_SANITIZE "Build with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)

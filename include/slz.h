@@ -10,6 +10,21 @@
 extern "C" {
 #endif
 
+/* Library version. The macros describe the header compiled against; slz_version_number() and
+ * slz_version_string() report the library actually linked (they differ only on a header/library
+ * mismatch, e.g. a shared library upgraded underneath). Number = major * 10000 + minor * 100 +
+ * patch, as LZ4_versionNumber: 0.1.0 is 100, 1.2.3 is 10203. CMake reads its project version
+ * from these three lines. */
+#define SLZ_VERSION_MAJOR 0
+#define SLZ_VERSION_MINOR 1
+#define SLZ_VERSION_PATCH 0
+#define SLZ_VERSION_NUMBER (SLZ_VERSION_MAJOR * 10000 + SLZ_VERSION_MINOR * 100 + SLZ_VERSION_PATCH)
+#define SLZ_VERSION_STR2(x) #x
+#define SLZ_VERSION_STR(x)  SLZ_VERSION_STR2(x)
+#define SLZ_VERSION_STRING                                                                                         SLZ_VERSION_STR(SLZ_VERSION_MAJOR) "." SLZ_VERSION_STR(SLZ_VERSION_MINOR) "." SLZ_VERSION_STR(SLZ_VERSION_PATCH)
+unsigned slz_version_number(void); /* SLZ_VERSION_NUMBER of the linked library */
+const char *slz_version_string(void); /* "major.minor.patch", static storage */
+
 enum {
     SLZ_OK = 0,
     SLZ_E_IO = -1,
