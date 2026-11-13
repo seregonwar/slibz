@@ -364,12 +364,18 @@ INF_INLINE int codes(inf *s) {
     size_t op = s->op, d;
     uint32_t e;
     int r;
+    const uint32_t *dt = s->dt;
 #define SAVE()     (s->bb = bb, s->bn = bn, s->p = p, s->op = op)
 #define LOAD()     (bb = s->bb, bn = s->bn, p = s->p, pe = s->e, op = s->op)
 #define CONSUME(x) (bb >>= (x) & 63, bn -= (x)) /* fast loop: only (u8)bn is valid */
 #define REFILL()   (bb |= ld64(p) << (bn & 63), p += 7 - (bn >> 3 & 7), bn |= 56)
 #define CONSUMEX(x) (bb >>= (x) & 63, bn -= (x) & 63)
 #define EXTRA(x)   ((unsigned)((sv & ((1ull << (uint8_t)(x)) - 1)) >> ((x) >> 8 & 63)))
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__aarch64__)
+    /* opaque copy: keeps the distance table base in a register (its offset from s is beyond
+     * the arm64 load immediate range, so it would otherwise be added on every lookup) */
+    __asm__("" : "+r"(dt));
+#endif
     for (;;) {
         if (op > OBUF - FAST_OUT) {
             SAVE();
@@ -442,12 +448,12 @@ INF_INLINE int codes(inf *s) {
                     }
                 }
                 len = (e >> 16) + EXTRA(e);
-                e = s->dt[bb & DTM];
+                e = dt[bb & DTM];
                 if (UNLIKELY(e & EXC)) {
                     if ((uint8_t)bn < 28 + LT_BITS) REFILL();
                     if (!(e & SUB)) return SLZ_E_CORRUPT;
                     CONSUME(e);
-                    e = s->dt[(e >> 16) + ((unsigned)bb & ((1u << (e >> 8 & 15)) - 1))];
+                    e = dt[(e >> 16) + ((unsigned)bb & ((1u << (e >> 8 & 15)) - 1))];
                     if (e & EXC) return SLZ_E_CORRUPT;
                 } else if ((uint8_t)bn < DT_BITS + 13 + LT_BITS) { /* primary-table distance */
                     REFILL();
@@ -487,10 +493,10 @@ INF_INLINE int codes(inf *s) {
             return SLZ_E_CORRUPT;
         }
         len = (e >> 16) + EXTRA(e);
-        e = s->dt[bb & DTM];
+        e = dt[bb & DTM];
         if (e & SUB) {
             CONSUMEX(e);
-            e = s->dt[(e >> 16) + ((unsigned)bb & ((1u << (e >> 8 & 15)) - 1))];
+            e = dt[(e >> 16) + ((unsigned)bb & ((1u << (e >> 8 & 15)) - 1))];
         }
         if (e & EXC) return SLZ_E_CORRUPT;
         sv = bb;
