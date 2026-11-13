@@ -55,6 +55,7 @@
 
 /* MIN evaluates its arguments twice: never pass expressions with side effects. */
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
 
 /* little-endian loads (archive formats are little-endian; works on any host) */
 static inline uint16_t rd16(const uint8_t *p) {
@@ -279,7 +280,7 @@ typedef struct {
 
 int open_7z(slz_archive *a, const uint8_t *head, size_t hn);
 int z7_supported(const folder7 *f);
-int z7_decode(os_fd fd, const folder7 *f, wr_fn wr, void *wu); /* exactly f->usize bytes to wr */
+int z7_decode(os_fd fd, const folder7 *f, wr_fn wr, void *wu, unsigned threads); /* exactly f->usize bytes to wr */
 void z7_free(z7 *z);
 
 /* ===================== formats.c: archive formats ===================== */

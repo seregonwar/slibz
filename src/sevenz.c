@@ -379,13 +379,181 @@ static int count_wr(void *u, const uint8_t *p, size_t n) {
     return c->wr(c->wu, p, n);
 }
 
+typedef struct {
+    uint8_t *p;
+    size_t n, cap;
+} membuf;
+static int mem_wr(void *u, const uint8_t *p, size_t n) {
+    membuf *m = (membuf *)u;
+    if (n > m->cap - m->n) return SLZ_E_CORRUPT;
+    memcpy(m->p + m->n, p, n);
+    m->n += n;
+    return 0;
+}
+
+/* ---------------- LZMA2 in parallel ----------------
+ * A multithreaded LZMA2 encoder (7-Zip, xz -T) starts every block with a chunk that resets the
+ * dictionary, the properties and the state (control >= 0xE0), so the stream splits there into
+ * segments that decode independently. They are decoded a batch at a time, one segment per
+ * thread into memory, then handed to the writer in order. */
+#define PAR_MAXSEG (256u << 20) /* larger segments: sequential streaming decode */
+#define PAR_MEM    (1u << 30)   /* memory budget of one batch: output buffers + windows */
+
+typedef struct {
+    uint64_t poff, pend, un; /* packed range, unpacked size */
+} seg2;
+
+/* the segment's packed bytes, then (except for the last segment) the end-of-stream byte the
+ * segment decoder needs to stop at the next segment's first chunk */
+typedef struct {
+    rng r;
+    int eos;
+} segin;
+static int64_t segin_read(void *u, uint8_t *b, size_t n) {
+    segin *s = (segin *)u;
+    int64_t k = rng_read(&s->r, b, n);
+    if (k == 0 && s->eos && n) {
+        s->eos = 0;
+        b[0] = 0;
+        return 1;
+    }
+    return k;
+}
+
+/* Chunk headers only (the chunk data is skipped). Returns the number of segments, 0 when the
+ * stream does not start with a full reset or is malformed (the sequential decoder then reports
+ * the error). */
+static size_t lz2_scan(os_fd fd, const folder7 *f, seg2 **out) {
+    uint64_t pos = f->pack_off, end = f->pack_off + f->pack_size, un = 0;
+    seg2 *s = NULL;
+    size_t n = 0, cap = 0;
+    for (;;) {
+        uint8_t h[6];
+        unsigned c;
+        uint64_t u, pk, hl;
+        if (pos >= end || os_pread(fd, h, 1, pos) != 1) goto bad;
+        if ((c = h[0]) == 0) break;
+        if (c == 1 || c == 2)
+            hl = 3;
+        else if (c >= 0x80)
+            hl = (c >> 5 & 3) >= 2 ? 6 : 5;
+        else
+            goto bad;
+        if (end - pos < hl || os_pread(fd, h, (size_t)hl, pos) != (int64_t)hl) goto bad;
+        u = (uint64_t)((c < 0x80 ? 0 : (c & 0x1f) << 16) | h[1] << 8 | h[2]) + 1;
+        pk = c < 0x80 ? u : (uint64_t)(h[3] << 8 | h[4]) + 1;
+        if (c >= 0xe0) { /* a new independent segment */
+            if (n == cap) {
+                seg2 *t = (seg2 *)realloc(s, (cap = cap ? cap * 2 : 16) * sizeof *s);
+                if (!t) goto bad;
+                s = t;
+            }
+            if (n) s[n - 1].pend = pos;
+            s[n].poff = pos;
+            s[n].un = 0;
+            n++;
+        } else if (!n) {
+            goto bad;
+        }
+        s[n - 1].un += u;
+        un += u;
+        if (end - pos < hl || end - pos - hl < pk) goto bad;
+        pos += hl + pk;
+    }
+    if (!n || un != f->usize) goto bad;
+    s[n - 1].pend = end;
+    *out = s;
+    return n;
+bad:
+    free(s);
+    return 0;
+}
+
+typedef struct {
+    os_fd fd;
+    const seg2 *s;
+    size_t ns, first, n; /* all segments; this batch: s[first, first + n) */
+    uint64_t dict;
+    uint8_t **buf;
+    volatile int64_t next, err;
+} par2;
+
+static int seg_decode(const par2 *p, size_t i, uint8_t *out) {
+    const seg2 *g = &p->s[i];
+    segin in;
+    membuf m;
+    lzd *z;
+    int r;
+    in.r.fd = p->fd;
+    in.r.pos = g->poff;
+    in.r.end = g->pend;
+    in.eos = i + 1 < p->ns;
+    m.p = out;
+    m.n = 0;
+    m.cap = (size_t)g->un;
+    if (!(z = lzd_new(p->dict, g->un))) return SLZ_E_NOMEM;
+    lzd_io(z, segin_read, &in, mem_wr, &m);
+    r = lzd_lzma2(z, g->un);
+    lzd_free(z);
+    return r ? r : m.n != g->un ? SLZ_E_CORRUPT : 0;
+}
+
+static void par_worker(void *u) {
+    par2 *p = (par2 *)u;
+    int64_t k;
+    while (!os_add(&p->err, 0) && (k = os_add(&p->next, 1) - 1) < (int64_t)p->n) {
+        int r = seg_decode(p, p->first + (size_t)k, p->buf[k]);
+        if (r) os_cas(&p->err, 0, r);
+    }
+}
+
+/* SLZ_E_NOTSUP: not worth it or not possible (nothing was written: decode sequentially) */
+static int lz2_par(os_fd fd, const folder7 *f, uint64_t dict, unsigned threads, wr_fn w, void *u) {
+    par2 p;
+    seg2 *s = NULL;
+    uint64_t max = 0, per;
+    size_t ns = threads > 1 ? lz2_scan(fd, f, &s) : 0, t, i, b;
+    int r = 0;
+    for (i = 0; i < ns; i++)
+        max = MAX(max, s[i].un);
+    if (ns < 2 || max > PAR_MAXSEG) {
+        free(s);
+        return SLZ_E_NOTSUP;
+    }
+    per = max + MIN(dict, max); /* output buffer + decoder window per thread */
+    t = MIN((size_t)MIN(threads, 64u), ns);
+    t = (size_t)MIN((uint64_t)t, MAX(PAR_MEM / per, 2));
+    memset(&p, 0, sizeof p);
+    p.fd = fd;
+    p.s = s;
+    p.ns = ns;
+    p.dict = dict;
+    if (!(p.buf = (uint8_t **)calloc(t, sizeof *p.buf))) r = SLZ_E_NOTSUP;
+    for (i = 0; !r && i < t; i++)
+        if (!(p.buf[i] = (uint8_t *)malloc((size_t)max + 1))) r = SLZ_E_NOTSUP;
+    for (b = 0; !r && b < ns; b += p.n) {
+        p.first = b;
+        p.n = MIN(t, ns - b);
+        p.next = 0;
+        os_run((unsigned)p.n, par_worker, &p);
+        r = (int)p.err;
+        for (i = 0; !r && i < p.n; i++)
+            r = w(u, p.buf[i], (size_t)s[b + i].un);
+    }
+    for (i = 0; p.buf && i < t; i++)
+        free(p.buf[i]);
+    free(p.buf);
+    free(s);
+    return r;
+}
+
 /* 0 if this folder can be decoded, else why not (checked before any output file is created) */
 int z7_supported(const folder7 *f) {
     if (f->enc) return SLZ_E_ENCRYPTED;
     return f->unsupported || method_of(&f->c[f->dec]) < 0 ? SLZ_E_METHOD : 0;
 }
 
-int z7_decode(os_fd fd, const folder7 *f, wr_fn wr, void *wu) {
+int z7_decode(os_fd fd, const folder7 *f, wr_fn wr, void *wu, unsigned threads) {
     rng in;
     counted cnt;
     bcj *filt = NULL;
@@ -440,9 +608,13 @@ int z7_decode(os_fd fd, const folder7 *f, wr_fn wr, void *wu) {
             dict =
                 c->props[0] == 40 ? 0xffffffffu : (uint64_t)(2 | (c->props[0] & 1)) << (c->props[0] / 2 + 11);
         }
-        if (!(z = lzd_new(dict, f->usize)))
+        /* SLZ_E_NOTSUP: not split into parallel segments, nothing written yet */
+        r = m == SLZ_M_LZMA2 ? lz2_par(fd, f, dict, threads, w, u) : SLZ_E_NOTSUP;
+        if (r != SLZ_E_NOTSUP) {
+            /* decoded in parallel, or failed */
+        } else if (!(z = lzd_new(dict, f->usize))) {
             r = SLZ_E_NOMEM;
-        else {
+        } else {
             lzd_io(z, rng_read, &in, w, u);
             r = m == SLZ_M_LZMA ? lzd_lzma(z, c->props, f->usize, 1) : lzd_lzma2(z, f->usize);
             lzd_free(z);
@@ -456,17 +628,6 @@ int z7_decode(os_fd fd, const folder7 *f, wr_fn wr, void *wu) {
 
 /* ---------------- header ---------------- */
 
-typedef struct {
-    uint8_t *p;
-    size_t n, cap;
-} membuf;
-static int mem_wr(void *u, const uint8_t *p, size_t n) {
-    membuf *m = (membuf *)u;
-    if (n > m->cap - m->n) return SLZ_E_CORRUPT;
-    memcpy(m->p + m->n, p, n);
-    m->n += n;
-    return 0;
-}
 
 /* UTF-16LE -> UTF-8, strict (unpaired surrogates are corruption) */
 static int utf16(br *b, char *out, size_t cap, size_t *len) {
@@ -713,7 +874,7 @@ int open_7z(slz_archive *a, const uint8_t *head, size_t hn) {
             r = SLZ_E_NOMEM;
             goto fail;
         }
-        if ((r = z7_decode(a->fd, &s.f[0], mem_wr, &m)) ||
+        if ((r = z7_decode(a->fd, &s.f[0], mem_wr, &m, 1)) ||
             (s.f[0].has_crc && slz_crc32(0, m.p, m.n) != s.f[0].crc)) {
             free(m.p);
             r = r ? r : SLZ_E_CORRUPT;

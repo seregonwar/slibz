@@ -125,7 +125,10 @@ def pack_all(src, out):
         for name, opts in [("lzma2.7z", ["-m0=lzma2", "-mx=5"]), ("lzma.7z", ["-m0=lzma", "-ms=on"]),
                            ("nonsolid.7z", ["-m0=lzma2", "-ms=off"]), ("copy.7z", ["-mx=0"]),
                            ("deflate.7z", ["-m0=deflate"]), ("bcj.7z", ["-mf=BCJ", "-m0=lzma2"]),
-                           ("plainhdr.7z", ["-mhc=off", "-m0=lzma"]), ("ultra.7z", ["-mx=9", "-mqs=on"])]:
+                           ("plainhdr.7z", ["-mhc=off", "-m0=lzma"]), ("ultra.7z", ["-mx=9", "-mqs=on"]),
+                           # multithreaded LZMA2: 1 MiB blocks, each one an independent segment (parallel decode)
+                           ("lzma2mt.7z", ["-m0=lzma2:c=1m", "-mmt=4"]),
+                           ("bcjmt.7z", ["-mf=BCJ", "-m0=lzma2:c=1m", "-mmt=4"])]:
             p = os.path.join(out, name)
             subprocess.run([sz, "a", "-bd", "-y", *opts, p, "."], cwd=src, check=True, stdout=subprocess.DEVNULL)
             arcs[name] = p
@@ -350,6 +353,19 @@ def part_hostile(work, src, want, arcs):
                 check(not os.path.islink(os.path.join(d, f)), f"{name} created a symlink")
         shutil.rmtree(os.path.join(work, "h"), ignore_errors=True)
 
+    # a damaged byte inside a later LZMA2 segment fails the parallel decode cleanly
+    if "lzma2mt.7z" in arcs:
+        data = bytearray(open(arcs["lzma2mt.7z"], "rb").read())
+        for frac in (0.5, 0.8):
+            bad = bytearray(data)
+            bad[int(len(bad) * frac)] ^= 0x55
+            p = os.path.join(work, "segbad.7z")
+            open(p, "wb").write(bad)
+            for threads in ("1", "8"):
+                dst = os.path.join(work, "segbad-out")
+                run("x", p, dst, "-q", "-j", threads, expect=False)
+                shutil.rmtree(dst, ignore_errors=True)
+
     # encrypted 7z (AES data, AES header): refused with a clear error, nothing written
     sz = shutil.which("7z") or shutil.which("7zz") or shutil.which("7za")
     if sz:
@@ -391,7 +407,7 @@ def part_fuzz(work, src, want, arcs):
     # 4. fuzz: truncations and bit flips must never crash / escape
     rnd = random.Random(7)
     seeds = [arcs[k] for k in ("def1.zip", "pax.tar", "pax.tar.gz", "gz", "zip64.zip", "lzma.7z", "nonsolid.7z",
-                                "plainhdr.7z", "bcj.7z") if k in arcs]
+                                "plainhdr.7z", "bcj.7z", "lzma2mt.7z") if k in arcs]
     small = os.path.join(work, "small.zip")
     open(small, "wb").write(zip_with([(f"d/{i}.txt", (b"abc%d" % i) * (i * 30)) for i in range(20)]))
     seeds.append(small)
@@ -419,7 +435,7 @@ def part_fuzz(work, src, want, arcs):
 
 def part_destructive(work, src, want, arcs):
     # 5. destructive extraction: interrupted repeatedly, resumed, result identical, archive gone
-    for i, name in enumerate(("def9.zip", "store.zip", "pax.tar", "gz", "nonsolid.7z", "lzma2.7z")):
+    for i, name in enumerate(("def9.zip", "store.zip", "pax.tar", "gz", "nonsolid.7z", "lzma2.7z", "lzma2mt.7z")):
         if name not in arcs or not mine(i):
             continue
         p = os.path.join(work, "d-" + os.path.basename(arcs[name]))

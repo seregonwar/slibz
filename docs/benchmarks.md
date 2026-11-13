@@ -115,9 +115,11 @@ The slz decoders stream with bounded memory and can be resumed. libdeflate decod
 - **zip**: slz is the fastest (2.9 times faster than bsdtar 3.8 on Silesia, 1.5 times on small files).
 - **tar.gz**: tied with bsdtar on large files, fastest on many small files.
 - **7z, non-solid** (one folder per file): extracted in parallel, 2.1-3.4 times faster than 7-Zip 26.06.
-- **7z, solid**: **7-Zip 26.06 is 2.4 times faster.** It decodes the independent LZMA2 segments of a
-  solid block in parallel, and its LZMA decoder is faster single-threaded too. slz decodes a solid
-  block sequentially at ~61% of xz's single-thread speed. This is the main gap (see the [roadmap](roadmap.md)).
+- **7z, solid**: a multithreaded LZMA2 encoder (7-Zip's default) resets the dictionary at every block
+  (64 MiB at the default level), so a solid folder splits into segments that decode independently.
+  slz finds them from the chunk headers and decodes them in parallel, a batch of one segment per
+  thread, then writes them in order. A folder written as a single segment (`-mmt=1`, LZMA, or
+  blocks over 256 MiB) still decodes on one core. The figures above predate parallel segments.
 - **Large archive** (1.5 GB zip of low-redundancy data, 2 003 entries, 1.96 GB out): slz 1.58 s,
   bsdtar 6.15 s, unzip 8.02 s (system versions). In-place mode takes 18.4 s for the same archive,
   because every checkpoint makes the output durable (fsync) before freeing archive space. The peak
