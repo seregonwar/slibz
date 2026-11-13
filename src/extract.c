@@ -27,7 +27,8 @@ typedef struct {
     volatile int64_t next, files, skipped, out, total;
     volatile int64_t err; /* first error, set once with os_cas, read atomically */
     int destr, resumed;
-    unsigned ft; /* decoder threads inside one 7z folder (solid LZMA2 splits into segments) */
+    unsigned ft;  /* decoder threads inside one 7z folder (solid LZMA2 splits into segments) */
+    size_t *sched; /* parallel mode: work item to run k-th (NULL: in order) */
     int (*unit)(void *w, size_t k, const jrec *res); /* one work item: an entry, or a 7z folder */
     uint64_t punch_base;                             /* never punch below this (7z signature header) */
     os_fd arw, jf;
@@ -476,6 +477,47 @@ static void wk_free(wk *w) {
     nat_zfree(w->zd);
 }
 
+/* Parallel order: work items of 1 MiB or more first, largest first, so that a big one never starts
+ * last while the other threads run out of work (longest-processing-time scheduling); the small
+ * ones follow in on-disk order, which keeps reads sequential and consecutive files in the same
+ * directory. NULL: keep the on-disk order. */
+typedef struct {
+    uint64_t size;
+    size_t k;
+} sitem;
+static int by_size_desc(const void *x, const void *y) {
+    const sitem *a = (const sitem *)x, *b = (const sitem *)y;
+    return a->size != b->size ? (a->size < b->size) - (a->size > b->size) : (a->k > b->k) - (a->k < b->k);
+}
+static size_t *schedule(const job *j, unsigned threads) {
+    sitem *big;
+    size_t *s, k, nb = 0, n = 0;
+    if (threads < 2 || j->n < 2 || j->a->fmt == SLZ_SLZ) return NULL; /* .slz blocks are equal-sized */
+    s = (size_t *)malloc(j->n * sizeof *s);
+    big = (sitem *)malloc(j->n * sizeof *big);
+    if (!s || !big) {
+        free(s);
+        free(big);
+        return NULL;
+    }
+    for (k = 0; k < j->n; k++) {
+        uint64_t size = j->a->fmt == SLZ_7Z ? j->a->z7->f[k].usize : j->ord[k]->usize;
+        if (size >= (1u << 20)) {
+            big[nb].size = size;
+            big[nb++].k = k;
+        }
+    }
+    qsort(big, nb, sizeof *big, by_size_desc);
+    for (k = 0; k < nb; k++)
+        s[n++] = big[k].k;
+    for (k = 0; k < j->n; k++) {
+        uint64_t size = j->a->fmt == SLZ_7Z ? j->a->z7->f[k].usize : j->ord[k]->usize;
+        if (size < (1u << 20)) s[n++] = k;
+    }
+    free(big);
+    return s;
+}
+
 static void worker(void *p) {
     job *j = (job *)p;
     wk w;
@@ -483,7 +525,7 @@ static void worker(void *p) {
     while (!r && !os_add(&j->err, 0)) {
         int64_t k = os_add(&j->next, 1) - 1;
         if (k >= (int64_t)j->n) break;
-        if ((r = j->unit(&w, (size_t)k, NULL)) && w.out != OS_BAD) {
+        if ((r = j->unit(&w, j->sched ? j->sched[k] : (size_t)k, NULL)) && w.out != OS_BAD) {
             os_close(w.out);
             w.out = OS_BAD;
         }
@@ -714,7 +756,9 @@ int slz_extract(slz_archive *a, const char *dest, slz_opts *opts) {
             wk_free(&w);
         }
         if (!r) {
-            os_run(MIN(t, (unsigned)MIN(j.n ? j.n : 1, 64)), worker, &j);
+            unsigned nt = MIN(t, (unsigned)MIN(j.n ? j.n : 1, 64));
+            j.sched = schedule(&j, nt);
+            os_run(nt, worker, &j);
             r = (int)j.err;
         }
         if (!r && a->fmt == SLZ_SLZ) {
@@ -728,5 +772,6 @@ int slz_extract(slz_archive *a, const char *dest, slz_opts *opts) {
 out:
     free(j.ord);
     free(j.lim);
+    free(j.sched);
     return r;
 }
