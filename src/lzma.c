@@ -195,20 +195,27 @@ static inline unsigned rtree(rcs *rc, uint16_t *p, unsigned bits) { /* LSB-first
 }
 
 /* literal after a match, decoded against the byte at rep0 (as in xz): offs is 0x100 while the
- * decoded bits equal the match byte's, 0 afterwards (plain literal probabilities) */
+ * decoded bits equal the match byte's, 0 afterwards (plain literal probabilities). As in tree(),
+ * the probabilities for both outcomes of a bit are loaded before it is decoded. */
 static inline unsigned matched(rcs *rc, uint16_t *p, unsigned mb) {
-    unsigned offs = 0x100, sym = 1, i;
-    for (i = 0; i < 8; i++) {
-        unsigned mbit, j;
-        uint32_t k;
-        mb <<= 1;
-        mbit = mb & offs;
-        j = offs + mbit + sym;
-        k = bitm(rc, p + j, p[j]);
+    unsigned offs = 0x100, sym = 1, i, j;
+    uint32_t pr, k;
+    mb <<= 1;
+    j = offs + (mb & offs) + sym;
+    pr = p[j];
+    for (i = 0; i < 7; i++) { /* the last bit, whose successors would be out of range, is below */
+        unsigned nmb = mb << 1, o0 = offs & ~mb, o1 = offs & mb;
+        unsigned j0 = o0 + (nmb & o0) + 2 * sym, j1 = o1 + (nmb & o1) + 2 * sym + 1;
+        uint32_t c0 = p[j0], c1 = p[j1];
+        k = bitm(rc, p + j, pr);
         sym = 2 * sym - k;
-        offs &= ~mbit ^ k;
+        offs = o0 ^ ((o0 ^ o1) & k);
+        j = j0 ^ ((j0 ^ j1) & k);
+        pr = c0 ^ ((c0 ^ c1) & k);
+        mb = nmb;
     }
-    return sym & 0xff;
+    k = bitm(rc, p + j, pr);
+    return (2 * sym - k) & 0xff;
 }
 
 static inline uint32_t direct(rcs *rc, unsigned bits) { /* bits >= 1, branch-free as in xz */
