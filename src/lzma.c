@@ -15,7 +15,7 @@
 #define LZ_IBUF   (1u << 16) /* input buffer */
 #define LZ_NEED   32         /* input bytes buffered at a symbol start: one symbol reads at most 20 */
 #define LZ_FLUSH  (1u << 20) /* hand output to wr at least every 1 MiB */
-#define LZ_SLACK  16         /* bytes after the dictionary for 8-byte match copies running past its end */
+#define LZ_SLACK  16         /* bytes after the dictionary for 16-byte match copies running past its end */
 #define PROB_INIT 1024
 
 typedef struct {
@@ -195,20 +195,27 @@ static inline unsigned rtree(rcs *rc, uint16_t *p, unsigned bits) { /* LSB-first
 }
 
 /* literal after a match, decoded against the byte at rep0 (as in xz): offs is 0x100 while the
- * decoded bits equal the match byte's, 0 afterwards (plain literal probabilities) */
+ * decoded bits equal the match byte's, 0 afterwards (plain literal probabilities). As in tree(),
+ * the probabilities for both outcomes of a bit are loaded before it is decoded. */
 static inline unsigned matched(rcs *rc, uint16_t *p, unsigned mb) {
-    unsigned offs = 0x100, sym = 1, i;
-    for (i = 0; i < 8; i++) {
-        unsigned mbit, j;
-        uint32_t k;
-        mb <<= 1;
-        mbit = mb & offs;
-        j = offs + mbit + sym;
-        k = bitm(rc, p + j, p[j]);
+    unsigned offs = 0x100, sym = 1, i, j;
+    uint32_t pr, k;
+    mb <<= 1;
+    j = offs + (mb & offs) + sym;
+    pr = p[j];
+    for (i = 0; i < 7; i++) { /* the last bit, whose successors would be out of range, is below */
+        unsigned nmb = mb << 1, o0 = offs & ~mb, o1 = offs & mb;
+        unsigned j0 = o0 + (nmb & o0) + 2 * sym, j1 = o1 + (nmb & o1) + 2 * sym + 1;
+        uint32_t c0 = p[j0], c1 = p[j1];
+        k = bitm(rc, p + j, pr);
         sym = 2 * sym - k;
-        offs &= ~mbit ^ k;
+        offs = o0 ^ ((o0 ^ o1) & k);
+        j = j0 ^ ((j0 ^ j1) & k);
+        pr = c0 ^ ((c0 ^ c1) & k);
+        mb = nmb;
     }
-    return sym & 0xff;
+    k = bitm(rc, p + j, pr);
+    return (2 * sym - k) & 0xff;
 }
 
 static inline uint32_t direct(rcs *rc, unsigned bits) { /* bits >= 1, branch-free as in xz */
@@ -278,6 +285,9 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
     unsigned state = s->state;
     uint32_t rep0 = s->rep[0], rep1 = s->rep[1], rep2 = s->rep[2], rep3 = s->rep[3];
     const unsigned pbm = (1u << s->pb) - 1, lpm = (1u << s->lp) - 1, lc = s->lc;
+    /* the last byte written (0 at the start): kept in a register, so the next literal does not
+     * wait for it to come back from the window */
+    unsigned prev = pos ? dict[dpos ? dpos - 1 : dsize - 1] : 0;
     const uint8_t *ifast; /* last input position at which a symbol may start without a refill */
     size_t dlim;          /* window position at which output is handed to wr: flush or wrap */
     int r = 0;
@@ -316,7 +326,7 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
         }
         ps = (unsigned)pos & pbm;
         if (!bit(&rc, &s->m.is_match[state][ps])) { /* literal */
-            unsigned prev = pos ? dict[dpos ? dpos - 1 : dsize - 1] : 0, sym;
+            unsigned sym;
             uint16_t *p = s->lit + 0x300 * ((((unsigned)pos & lpm) << lc) + (prev >> (8 - lc)));
             if (state >= 7) { /* after a match: decode against the byte at rep0 */
                 unsigned mb = rep0 < pos ? dict[dpos > rep0 ? dpos - rep0 - 1 : dpos + dsize - rep0 - 1] : 0;
@@ -325,6 +335,7 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
                 sym = tree(&rc, p, 8);
             }
             dict[dpos++] = (uint8_t)sym;
+            prev = sym;
             pos++;
             n--;
             state = state < 4 ? 0 : state < 10 ? state - 3 : state - 6;
@@ -364,8 +375,8 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
                             break;
                         }
                         state = state < 7 ? 9 : 11;
-                        dict[dpos] = dict[dpos > rep0 ? dpos - rep0 - 1 : dpos + dsize - rep0 - 1];
-                        dpos++;
+                        prev = dict[dpos > rep0 ? dpos - rep0 - 1 : dpos + dsize - rep0 - 1];
+                        dict[dpos++] = (uint8_t)prev;
                         pos++;
                         n--;
                         continue;
@@ -400,10 +411,24 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
                 uint8_t *dst = dict + dpos, *end = dst + len;
                 const uint8_t *src = dict + from;
                 dpos += len;
-                if (rep0 >= 7) {
-                    /* the source is at least 8 bytes behind the destination (or ahead of it), so
-                     * 8-byte forward copies give the byte-by-byte result. They can run up to 7
+                if (rep0 >= 15) {
+                    /* the source is at least 16 bytes behind the destination (or ahead of it), so
+                     * 16-byte forward copies give the byte-by-byte result. They can run up to 15
                      * bytes past the end (LZ_SLACK), over older history: restore it. */
+                    uint64_t a, b, keep0, keep1;
+                    memcpy(&keep0, end, 8);
+                    memcpy(&keep1, end + 8, 8);
+                    do {
+                        memcpy(&a, src, 8);
+                        memcpy(&b, src + 8, 8);
+                        memcpy(dst, &a, 8);
+                        memcpy(dst + 8, &b, 8);
+                        src += 16;
+                        dst += 16;
+                    } while (dst < end);
+                    memcpy(end, &keep0, 8);
+                    memcpy(end + 8, &keep1, 8);
+                } else if (rep0 >= 7) { /* the same with 8-byte copies */
                     uint64_t t, keep;
                     memcpy(&keep, end, 8);
                     do {
@@ -420,6 +445,7 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
                         *dst++ = *src++;
                     while (dst < end);
                 }
+                prev = end[-1];
             } else {
                 /* copy in runs that are contiguous on both sides of the circular window; a forward
                  * byte copy is correct for overlapping runs (distance < length) */
@@ -439,6 +465,7 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
                         dpos = 0;
                     }
                 }
+                prev = dict[dpos - 1]; /* dpos > 0: the window wraps only before a byte is copied */
                 if (s->err) break;
                 DLIM();
             }
