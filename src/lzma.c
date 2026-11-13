@@ -275,7 +275,11 @@ static inline unsigned length(rcs *rc, lenc *l, unsigned ps) {
 
 /* Decode `n` bytes (or up to an end marker when `eos_ok`). Hot state (range coder, window
  * position, state, rep distances) is held in locals and written back by SAVE() before any slow
- * path that reads it from *s, and on exit. */
+ * path that reads it from *s, and on exit. GCC's -O3 vectorizes the short match copy loops, which
+ * costs 2-5% here: the copies are a few bytes long. */
+#if defined(__GNUC__) && !defined(__clang__)
+__attribute__((optimize("no-tree-vectorize")))
+#endif
 static int lzma(lzd *s, uint64_t n, int eos_ok) {
     rcs rc;
     uint8_t *dict = s->dict;
