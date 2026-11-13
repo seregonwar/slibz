@@ -15,7 +15,7 @@
 #define LZ_IBUF   (1u << 16) /* input buffer */
 #define LZ_NEED   32         /* input bytes buffered at a symbol start: one symbol reads at most 20 */
 #define LZ_FLUSH  (1u << 20) /* hand output to wr at least every 1 MiB */
-#define LZ_SLACK  16         /* bytes after the dictionary for 8-byte match copies running past its end */
+#define LZ_SLACK  16         /* bytes after the dictionary for 16-byte match copies running past its end */
 #define PROB_INIT 1024
 
 typedef struct {
@@ -411,10 +411,24 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
                 uint8_t *dst = dict + dpos, *end = dst + len;
                 const uint8_t *src = dict + from;
                 dpos += len;
-                if (rep0 >= 7) {
-                    /* the source is at least 8 bytes behind the destination (or ahead of it), so
-                     * 8-byte forward copies give the byte-by-byte result. They can run up to 7
+                if (rep0 >= 15) {
+                    /* the source is at least 16 bytes behind the destination (or ahead of it), so
+                     * 16-byte forward copies give the byte-by-byte result. They can run up to 15
                      * bytes past the end (LZ_SLACK), over older history: restore it. */
+                    uint64_t a, b, keep0, keep1;
+                    memcpy(&keep0, end, 8);
+                    memcpy(&keep1, end + 8, 8);
+                    do {
+                        memcpy(&a, src, 8);
+                        memcpy(&b, src + 8, 8);
+                        memcpy(dst, &a, 8);
+                        memcpy(dst + 8, &b, 8);
+                        src += 16;
+                        dst += 16;
+                    } while (dst < end);
+                    memcpy(end, &keep0, 8);
+                    memcpy(end + 8, &keep1, 8);
+                } else if (rep0 >= 7) { /* the same with 8-byte copies */
                     uint64_t t, keep;
                     memcpy(&keep, end, 8);
                     do {
