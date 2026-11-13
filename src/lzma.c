@@ -154,8 +154,29 @@ static inline unsigned bit(rcs *rc, uint16_t *p) {
 
 /* Branch-free bit for the bit trees, whose bits are close to random: the update is computed with
  * a mask instead of a mispredicted branch. pr is *p, already loaded. Returns 0 - bit. Same
- * arithmetic as bit(); the probability update is the LZMA SDK's / xz's single expression. */
+ * arithmetic as bit(); the probability update is the LZMA SDK's / xz's single expression.
+ * LZ_SEL(m, a, b) is a when the mask m is 0, b when it is all ones.
+ * clang turns selects on the bit into cmov / csel, as xz's x86-64 asm does (code - bound sets the
+ * carry, which picks range, code and the next probability); that is 2% faster on x86-64 and 10% on
+ * arm64. GCC makes some of them branches, and is 10% faster with the masks. */
 #define PROB_OFF ((1u << 5) - 1 - 2048) /* bit 0: pr - ((pr + PROB_OFF) >> 5) = pr + ((2048 - pr) >> 5) */
+#if defined(__clang__)
+#define LZ_SEL(m, a, b) ((m) ? (b) : (a))
+static inline uint32_t bitm(rcs *rc, uint16_t *p, uint32_t pr) {
+    uint32_t bound, r1, c1;
+    unsigned b;
+    rc_norm(rc);
+    bound = (rc->range >> 11) * pr;
+    r1 = rc->range - bound;
+    c1 = rc->code - bound;
+    b = rc->code >= bound;
+    rc->range = b ? r1 : bound;
+    rc->code = b ? c1 : rc->code;
+    *p = (uint16_t)(pr - ((pr + (b ? 0 : PROB_OFF)) >> 5));
+    return 0u - b;
+}
+#else
+#define LZ_SEL(m, a, b) ((a) ^ (((a) ^ (b)) & (m)))
 static inline uint32_t bitm(rcs *rc, uint16_t *p, uint32_t pr) {
     uint32_t bound, m;
     rc_norm(rc);
@@ -166,6 +187,7 @@ static inline uint32_t bitm(rcs *rc, uint16_t *p, uint32_t pr) {
     *p = (uint16_t)(pr - ((pr + (PROB_OFF & ~m)) >> 5));
     return m;
 }
+#endif
 
 /* MSB-first bit tree, p[1] the root. Each level loads the probabilities of both children of its
  * node before its bit is known, so the next level does not wait for a load. */
@@ -175,7 +197,7 @@ static inline unsigned tree(rcs *rc, uint16_t *p, unsigned bits) {
     for (i = 1; i < bits; i++) {
         uint32_t c0 = p[2 * m], c1 = p[2 * m + 1], k = bitm(rc, p + m, pr);
         m = 2 * m - k;
-        pr = c0 ^ ((c0 ^ c1) & k);
+        pr = LZ_SEL(k, c0, c1);
     }
     return 2 * m - bitm(rc, p + m, pr) - (1u << bits);
 }
@@ -188,7 +210,7 @@ static inline unsigned rtree(rcs *rc, uint16_t *p, unsigned bits) { /* LSB-first
         k = bitm(rc, p + m, pr);
         m = 2 * m - k;
         r |= (k & 1) << i;
-        pr = c0 ^ ((c0 ^ c1) & k);
+        pr = LZ_SEL(k, c0, c1);
     }
     k = bitm(rc, p + m, pr);
     return r | (k & 1) << i;
@@ -209,9 +231,9 @@ static inline unsigned matched(rcs *rc, uint16_t *p, unsigned mb) {
         uint32_t c0 = p[j0], c1 = p[j1];
         k = bitm(rc, p + j, pr);
         sym = 2 * sym - k;
-        offs = o0 ^ ((o0 ^ o1) & k);
-        j = j0 ^ ((j0 ^ j1) & k);
-        pr = c0 ^ ((c0 ^ c1) & k);
+        offs = LZ_SEL(k, o0, o1);
+        j = LZ_SEL(k, j0, j1);
+        pr = LZ_SEL(k, c0, c1);
         mb = nmb;
     }
     k = bitm(rc, p + j, pr);
