@@ -316,12 +316,6 @@ out:
 #define FAST_IN  32
 #define FAST_OUT (258 + 32 + 2)
 
-#if defined(__GNUC__) || defined(__clang__)
-#define OPAQUE(x) __asm__("" : "+r"(x))
-#else
-#define OPAQUE(x) ((void)0)
-#endif
-
 /* copy a match of len (3..258) bytes from distance d (1..op) ending inside the output margin */
 static inline void copy_match(uint8_t *o, size_t d, unsigned len) {
     const uint8_t *m = o - d;
@@ -332,7 +326,6 @@ static inline void copy_match(uint8_t *o, size_t d, unsigned len) {
             memcpy(o + 16, m + 16, 16);
             o += 32;
             m += 32;
-            OPAQUE(o);
         } while (o < end); /* may overshoot <= 31 bytes */
     } else if (d >= 8) {
         do {
@@ -340,7 +333,6 @@ static inline void copy_match(uint8_t *o, size_t d, unsigned len) {
             memcpy(o + 8, m + 8, 8);
             o += 16;
             m += 16;
-            OPAQUE(o);
         } while (o < end);
     } else if (d == 1) {
         uint64_t v = 0x0101010101010101ull * *m;
@@ -348,7 +340,6 @@ static inline void copy_match(uint8_t *o, size_t d, unsigned len) {
             memcpy(o, &v, 8);
             memcpy(o + 8, &v, 8);
             o += 16;
-            OPAQUE(o);
         } while (o < end);
     } else {
         /* 8-byte stores advancing by d: each load reads bytes already final (the tail of the
@@ -359,7 +350,6 @@ static inline void copy_match(uint8_t *o, size_t d, unsigned len) {
             memcpy(o, &v, 8);
             o += d;
             m += d;
-            OPAQUE(o);
         } while (o < end);
     }
 }

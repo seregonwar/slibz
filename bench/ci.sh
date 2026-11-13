@@ -2,7 +2,7 @@
 # inflate-faster-bench only (never merged): run by .github/workflows/abbench.yml, argument = the
 # job's compiler (x86: gcc or clang job; arm64: one job).
 # Every job benches the variants of bench/variants.txt with both compilers (same-job ratios; -O3 is
-# the CMake Release default), probes gcc -O3 passes, and runs
+# the CMake Release default) and runs
 # its share of the fuzz seeds. x86: the compilers' default target (printed by info) decides whether
 # the BMI2 build is static or dispatched at run time; -march=x86-64 forces the dispatch.
 set -euo pipefail
@@ -24,29 +24,18 @@ r deps gcc
 r deps clang
 if [ "$arch" = x86_64 ] && [ "$job" = gcc ]; then
     r bench gcc -O3
-    r bench gcc -O2
     r bench clang -O3
-    # which -O3-only gcc pass costs (flag probes)
-    for x in -fvect-cost-model=very-cheap -fno-tree-vectorize -fno-split-paths -fno-unswitch-loops \
-        -fno-tree-partial-pre -fno-gcse-after-reload -fno-peel-loops -fno-predictive-commoning -fno-split-loops; do
-        r bench gcc -O3 "$x"
-    done
-    DIS_V=nvd r disasm gcc -O3
+    r bench gcc -O3 -march=x86-64
     CC=gcc r fuzz "$ITERS" 1 2
     CC=gcc FUZZ_CFLAGS="-march=x86-64 -DSLZ_NO_BMI2" r fuzz "$ITERS" 5
 elif [ "$arch" = x86_64 ]; then
     r bench clang -O3
     r bench gcc -O3
-    r bench gcc -O2
-    r bench gcc -O3 -fvect-cost-model=very-cheap
-    r bench gcc -O3 -fno-tree-vectorize
-    r bench gcc -O3 -march=x86-64
     r bench clang -O3 -march=x86-64 -DSLZ_NO_BMI2
     CC=clang r fuzz "$ITERS" 3 4
 else
     r bench gcc -O3
     r bench clang -O3
-    r bench gcc -O2
     CC=gcc r fuzz "$ITERS" 7 8
 fi
 echo "== bench/ci.sh done ($((SECONDS / 60))m$((SECONDS % 60))s)"
