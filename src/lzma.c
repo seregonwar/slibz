@@ -238,12 +238,6 @@ static void wrap(lzd *s) { /* the window is full: hand it out and start over at 
     s->dpos = s->dflushed = 0;
 }
 
-static void put(lzd *s, uint8_t b) { /* slow path (stored LZMA2 chunks) */
-    s->dict[s->dpos++] = b;
-    s->pos++;
-    if (s->dpos == s->dsize) wrap(s);
-}
-
 /* ---------------- LZMA ---------------- */
 
 static void init_probs(lzd *s) {
@@ -501,8 +495,24 @@ int lzd_lzma2(lzd *s, uint64_t n) {
                 break;
             }
             n -= un;
-            while (un-- && !s->err)
-                put(s, in_byte(s));
+            while (un && !s->err) { /* copy runs contiguous in the input buffer and the window */
+                size_t k;
+                if (s->ip >= s->ie) {
+                    refill(s);
+                    if (s->ip == s->ie) { /* input ended inside the stream */
+                        if (!s->err) s->err = SLZ_E_CORRUPT;
+                        break;
+                    }
+                }
+                k = MIN((size_t)un, s->ie - s->ip);
+                k = MIN(k, s->dsize - s->dpos);
+                memcpy(s->dict + s->dpos, s->ib + s->ip, k);
+                s->ip += k;
+                s->dpos += k;
+                s->pos += k;
+                un -= (unsigned)k;
+                if (s->dpos == s->dsize) wrap(s);
+            }
             continue;
         }
         if (c < 0x80) {
