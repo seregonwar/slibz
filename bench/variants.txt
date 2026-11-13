@@ -1,7 +1,8 @@
 # slz variants to compare: <name> <git ref> [overlay dir copied over the ref's src/ include/]
 # the first line is the baseline; names are C identifiers; no trailing comments
 h1 88445fc931ea85cc65d394bba09e3fa5086bc55d
-h2 88445fc931ea85cc65d394bba09e3fa5086bc55d bench/v/h2
-cm 88445fc931ea85cc65d394bba09e3fa5086bc55d bench/v/cm
-hc 88445fc931ea85cc65d394bba09e3fa5086bc55d bench/v/hc
-ob256k 88445fc931ea85cc65d394bba09e3fa5086bc55d bench/v/ob256k
+lt0 88445fc931ea85cc65d394bba09e3fa5086bc55d bench/v/lt0
+u8 88445fc931ea85cc65d394bba09e3fa5086bc55d bench/v/u8
+lu 88445fc931ea85cc65d394bba09e3fa5086bc55d bench/v/lu
+lub 88445fc931ea85cc65d394bba09e3fa5086bc55d bench/v/lub
+lurt 88445fc931ea85cc65d394bba09e3fa5086bc55d bench/v/lurt

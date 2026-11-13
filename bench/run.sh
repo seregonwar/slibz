@@ -6,7 +6,7 @@
 #   bench/run.sh deps <cc>                  pinned libdeflate, zlib-ng (native API), zlib into deps/<cc>
 #   bench/run.sh variants                   bench/variants.txt -> v/<name>/{src,include}, order in v/order
 #   bench/run.sh bench <cc> <flags...>      build every variant + bench/abbench.c, run it on Silesia
-#   bench/run.sh profile <cc> <flags...>    perf profile of the first variant and libdeflate (after bench)
+#   bench/run.sh profile <cc> <flags...>    perf profile of variants $PROF (default: first) and libdeflate
 #   bench/run.sh harness <cc> [variant]     tests/bench_inflate.c as is, on a variant (default: first)
 #   bench/run.sh fuzz <iters> <seeds...>    tests/fuzz_inflate.c (ASan + UBSan) per variant, same counters
 set -euo pipefail
@@ -28,6 +28,11 @@ info() {
     gcc --version | sed -n 1p
     clang --version | sed -n 1p
     cmake --version | sed -n 1p
+    # default code generation target (no -march given below unless a bench config says so)
+    echo "gcc default: $(gcc -Q --help=target 2> /dev/null | grep -E '^ +-march=' | tr -s ' \t' ' ' || true)," \
+        "predefines: $(echo | gcc -dM -E - | grep -oE '__(SSE4_2|AVX2|BMI2|AVX512F)__' | tr '\n' ' ' || true)"
+    echo "clang default: $(clang -### -x c -c /dev/null 2>&1 | grep -oE '"-target-cpu" "[^"]*"' || true)," \
+        "predefines: $(echo | clang -dM -E - | grep -oE '__(SSE4_2|AVX2|BMI2|AVX512F)__' | tr '\n' ' ' || true)"
 }
 
 corpus() {
@@ -175,35 +180,41 @@ perfbin() { # path of a working perf, installing it if needed (GitHub runners: p
     echo "$p"
 }
 
-profile() { # cpu-clock sampling of the first variant and of libdeflate, objects from bench <cc> <flags>
+profile() { # cpu-clock sampling of the variants in $PROF (default: the first) and of libdeflate
     local cc=$1
     shift
-    local flags="$*" o pre=$PWD/deps/$cc first perf m sym files
+    local flags="$*" o pre=$PWD/deps/$cc vs perf m sym files bin=
     o=$(objdir "$cc" "$flags")
-    first=$(sed -n 1p v/order)
+    vs=${PROF:-$(sed -n 1p v/order)}
     files=$(for f in $FILES; do echo "silesia/$f"; done)
-    [ -f "$o/$first.o" ] || { echo "profile: run bench $cc $flags first"; return 1; }
+    for m in $vs; do
+        [ -f "$o/$m.o" ] || { echo "profile: no $o/$m.o, run bench $cc $flags first"; return 1; }
+    done
     perf=$(perfbin) || { echo "profile: perf unavailable, skipped"; return 0; }
     echo "perf: $("$perf" --version)"
-    mkdir -p "$o/prof"
-    vh "$first" > "$o/prof/variants.h" # one slz variant: its static functions have unique names
-    # shellcheck disable=SC2086
-    $cc $flags -I"$o/prof" -I"$pre/include" bench/abbench.c "$o/$first.o" "$o/zng.o" "$pre/lib/libdeflate.a" \
-        "$pre/lib/libz-ng.a" "$pre/lib/libz.a" -o "$o/prof/abbench"
-    for m in "$first" libdeflate; do
+    for m in $vs; do # one slz variant per binary: its static functions have unique names
+        mkdir -p "$o/prof/$m"
+        vh "$m" > "$o/prof/$m/variants.h"
+        # shellcheck disable=SC2086
+        $cc $flags -I"$o/prof/$m" -I"$pre/include" bench/abbench.c "$o/$m.o" "$o/zng.o" "$pre/lib/libdeflate.a" \
+            "$pre/lib/libz-ng.a" "$pre/lib/libz.a" -o "$o/prof/$m/abbench"
+    done
+    for m in $vs libdeflate; do
+        [ "$m" = libdeflate ] || bin=$o/prof/$m/abbench # libdeflate: the last variant's binary
         echo "== perf $cc $flags: $m"
         # shellcheck disable=SC2086
         "$perf" stat -e task-clock,cycles,instructions,branches,branch-misses -- taskset -c "$CPU" \
-            "$o/prof/abbench" -r 3 -m "$m" $files 2>&1 | grep -E 'TOTAL|task-clock|cycles|instructions|branch' || true
+            "$bin" -r 3 -m "$m" $files 2>&1 | grep -E 'TOTAL|task-clock|cycles|instructions|branch' || true
         # shellcheck disable=SC2086
-        "$perf" record -q -e cpu-clock -F 10000 -o "$o/prof/$m.data" -- taskset -c "$CPU" "$o/prof/abbench" -r 3 \
+        "$perf" record -q -e cpu-clock -F 10000 -o "$o/prof/$m.data" -- taskset -c "$CPU" "$bin" -r 3 \
             -m "$m" $files > /dev/null 2>&1 || { echo "perf record failed"; continue; }
         "$perf" report -i "$o/prof/$m.data" --stdio -q --sort sym --percent-limit 0.3 2> /dev/null | sed -n '1,20p' || true
     done
-    for m in "$first" libdeflate; do
+    for m in $vs libdeflate; do
         [ -f "$o/prof/$m.data" ] || continue
         sym=$("$perf" report -i "$o/prof/$m.data" --stdio -q --sort sym 2> /dev/null |
-            awk '$2 == "[.]" && $3 ~ /^(codes|deflate_decompress)/ { print $3; exit }' || true)
+            awk '$2 == "[.]" && $3 ~ /^(codes|deflate_decompress|libdeflate_deflate_decompress)/ { print $3; exit }' ||
+            true)
         [ -n "$sym" ] || continue
         echo "== perf annotate $cc $flags: $m $sym (instructions >= 0.1% of samples)"
         "$perf" annotate -i "$o/prof/$m.data" --stdio --no-source "$sym" 2> /dev/null |

@@ -125,9 +125,11 @@ static inline int bits(inf *s, unsigned n, unsigned *v) {
 }
 
 /* Decode table entry (32 bits):
- *   bits 0-5   bits to consume: codeword length + extra bits (subtable pointer: primary bits)
+ *   bits 0-5   bits to consume: codeword length + extra bits (subtable pointer: primary bits);
+ *              bits 6-7 are 0, so (uint8_t)entry is a shift count without masking
  *   bits 8-11  codeword length (subtable pointer: subtable index bits); the extra bits of a
- *              length or distance are (bits & mask(bits 0-5)) >> (bits 8-11)
+ *              length or distance are (bits & mask(bits 0-5)) >> (bits 8-11), and bits 12-15
+ *              are 0 in those entries, so (uint8_t)(entry >> 8) is the codeword length
  *   bit 13 EOB, bit 14 SUB (subtable pointer), bit 15 EXC (EOB, SUB, or invalid code)
  *   bits 16-30 value: literal byte, length / distance base, code-length symbol, subtable offset
  *   bit 31 LIT (literal)
@@ -309,12 +311,11 @@ out:
 /* Margins for the fast loop. Input: from a position checked against FAST_IN, at most 4 refills
  * run before the next check (each reads 8 bytes and advances <= 7), reading <= 29 bytes.
  * Output: one iteration writes <= 3 literals, or <= 2 literals and a match of <= 258 bytes plus
- * the <= 47-byte overshoot of copy_match. Bytes past op inside the margin are scratch. */
+ * the <= 31-byte overshoot of copy_match. Bytes past op inside the margin are scratch. */
 #define FAST_IN  32
-#define FAST_OUT (258 + 48 + 2)
+#define FAST_OUT (258 + 32 + 2)
 
-/* copy a match of len (3..258) bytes from distance d (1..op) ending inside the output margin;
- * chunks large enough that most matches take a single pass (no loop-exit misprediction) */
+/* copy a match of len (3..258) bytes from distance d (1..op) ending inside the output margin */
 static inline void copy_match(uint8_t *o, size_t d, unsigned len) {
     const uint8_t *m = o - d;
     uint8_t *end = o + len;
@@ -322,28 +323,22 @@ static inline void copy_match(uint8_t *o, size_t d, unsigned len) {
         do {
             memcpy(o, m, 16);
             memcpy(o + 16, m + 16, 16);
-            memcpy(o + 32, m + 32, 16);
-            o += 48;
-            m += 48;
-        } while (o < end); /* may overshoot <= 47 bytes */
+            o += 32;
+            m += 32;
+        } while (o < end); /* may overshoot <= 31 bytes */
     } else if (d >= 8) {
         do {
             memcpy(o, m, 8);
             memcpy(o + 8, m + 8, 8);
-            memcpy(o + 16, m + 16, 8);
-            memcpy(o + 24, m + 24, 8);
-            memcpy(o + 32, m + 32, 8);
-            o += 40;
-            m += 40;
+            o += 16;
+            m += 16;
         } while (o < end);
     } else if (d == 1) {
         uint64_t v = 0x0101010101010101ull * *m;
         do {
             memcpy(o, &v, 8);
             memcpy(o + 8, &v, 8);
-            memcpy(o + 16, &v, 8);
-            memcpy(o + 24, &v, 8);
-            o += 32;
+            o += 16;
         } while (o < end);
     } else {
         /* 8-byte stores advancing by d: each load reads bytes already final (the tail of the
@@ -370,10 +365,12 @@ INF_INLINE int codes(inf *s) {
     int r;
 #define SAVE()     (s->bb = bb, s->bn = bn, s->p = p, s->op = op)
 #define LOAD()     (bb = s->bb, bn = s->bn, p = s->p, pe = s->e, op = s->op)
-#define CONSUME(x) (bb >>= (x) & 63, bn -= (x)) /* fast loop: only (u8)bn is valid */
+/* (uint8_t) shift counts instead of & 63: x86 shrx / arm64 lsr take the count unmasked, and
+ * bzhi (BMI2 mask) uses exactly the low byte */
+#define CONSUME(x) (bb >>= (uint8_t)(x), bn -= (x)) /* fast loop: only (u8)bn is valid */
 #define REFILL()   (bb |= ld64(p) << (bn & 63), p += 7 - (bn >> 3 & 7), bn |= 56)
 #define CONSUMEX(x) (bb >>= (x) & 63, bn -= (x) & 63)
-#define EXTRA(x)   ((unsigned)((sv & ((1ull << ((x) & 63)) - 1)) >> ((x) >> 8 & 15)))
+#define EXTRA(x)   ((unsigned)((sv & ((1ull << (uint8_t)(x)) - 1)) >> (uint8_t)((x) >> 8)))
     for (;;) {
         if (op > OBUF - FAST_OUT) {
             SAVE();
@@ -446,12 +443,14 @@ INF_INLINE int codes(inf *s) {
                 }
                 len = (e >> 16) + EXTRA(e);
                 e = s->dt[bb & DTM];
-                if ((uint8_t)bn < 28 + LT_BITS) REFILL();
                 if (UNLIKELY(e & EXC)) {
+                    if ((uint8_t)bn < 28 + LT_BITS) REFILL();
                     if (!(e & SUB)) return SLZ_E_CORRUPT;
                     CONSUME(e);
                     e = s->dt[(e >> 16) + ((unsigned)bb & ((1u << (e >> 8 & 15)) - 1))];
                     if (e & EXC) return SLZ_E_CORRUPT;
+                } else if ((uint8_t)bn < 21 + LT_BITS) { /* primary-table distance: <= 8 + 13 bits */
+                    REFILL();
                 }
                 sv = bb;
                 CONSUME(e);
