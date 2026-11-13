@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="840" height="270" viewBox="0 0 840 270" role="img" aria-labelledby="title desc">
+<title id="title">slz decoder throughput over time</title>
+<desc id="desc">Each point is one run on main (a push or a manual run), measured on a GitHub-hosted runner. The competitors run in the same job, so a shift shared by every line comes from the runner, not from slz.</desc>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif;font-variant-numeric:tabular-nums}</style>
+<rect x="0.5" y="0.5" width="413.0" height="232.0" fill="#151b23" rx="6" stroke="#3d444d"/>
+<text x="12.5" y="22.5" font-size="13" fill="#f0f6fc" font-weight="600">DEFLATE decode, MB/s</text>
+<text x="12.5" y="38.5" font-size="11" fill="#9198a1">last 1 run on main · higher is better</text>
+<line x1="44.5" y1="202.5" x2="302.5" y2="202.5" stroke="#3d444d" stroke-width="1"/>
+<text x="38.5" y="206.5" font-size="10" fill="#9198a1" text-anchor="end">0</text>
+<line x1="44.5" y1="166.0" x2="302.5" y2="166.0" stroke="#3d444d" stroke-width="1"/>
+<text x="38.5" y="170.0" font-size="10" fill="#9198a1" text-anchor="end">300</text>
+<line x1="44.5" y1="129.5" x2="302.5" y2="129.5" stroke="#3d444d" stroke-width="1"/>
+<text x="38.5" y="133.5" font-size="10" fill="#9198a1" text-anchor="end">600</text>
+<line x1="44.5" y1="93.0" x2="302.5" y2="93.0" stroke="#3d444d" stroke-width="1"/>
+<text x="38.5" y="97.0" font-size="10" fill="#9198a1" text-anchor="end">900</text>
+<line x1="44.5" y1="56.5" x2="302.5" y2="56.5" stroke="#3d444d" stroke-width="1"/>
+<text x="38.5" y="60.5" font-size="10" fill="#9198a1" text-anchor="end">1200</text>
+<circle cx="173.5" cy="68.3" r="2" fill="#656c76"><title>libdeflate 1103 MB/s at df9dd34</title></circle>
+<circle cx="173.5" cy="105.7" r="2" fill="#656c76"><title>zlib-ng 796 MB/s at df9dd34</title></circle>
+<circle cx="173.5" cy="146.3" r="2" fill="#656c76"><title>zlib 462 MB/s at df9dd34</title></circle>
+<circle cx="173.5" cy="122.6" r="2.5" fill="#4493f8"><title>slz 657 MB/s at df9dd34</title></circle>
+<text x="310.5" y="72.3" font-size="11" fill="#9198a1">libdeflate 1103</text>
+<text x="310.5" y="109.7" font-size="11" fill="#9198a1">zlib-ng 796</text>
+<text x="310.5" y="126.6" font-size="11" fill="#f0f6fc" font-weight="600">slz 657</text>
+<text x="310.5" y="150.3" font-size="11" fill="#9198a1">zlib 462</text>
+<text x="173.5" y="218.5" font-size="10" fill="#9198a1" text-anchor="middle">df9dd34 · 2026-11-13</text>
+<rect x="426.5" y="0.5" width="413.0" height="232.0" fill="#151b23" rx="6" stroke="#3d444d"/>
+<text x="438.5" y="22.5" font-size="13" fill="#f0f6fc" font-weight="600">LZMA2 decode, MB/s</text>
+<text x="438.5" y="38.5" font-size="11" fill="#9198a1">last 1 run on main · higher is better</text>
+<line x1="470.5" y1="202.5" x2="728.5" y2="202.5" stroke="#3d444d" stroke-width="1"/>
+<text x="464.5" y="206.5" font-size="10" fill="#9198a1" text-anchor="end">0</text>
+<line x1="470.5" y1="166.0" x2="728.5" y2="166.0" stroke="#3d444d" stroke-width="1"/>
+<text x="464.5" y="170.0" font-size="10" fill="#9198a1" text-anchor="end">40</text>
+<line x1="470.5" y1="129.5" x2="728.5" y2="129.5" stroke="#3d444d" stroke-width="1"/>
+<text x="464.5" y="133.5" font-size="10" fill="#9198a1" text-anchor="end">80</text>
+<line x1="470.5" y1="93.0" x2="728.5" y2="93.0" stroke="#3d444d" stroke-width="1"/>
+<text x="464.5" y="97.0" font-size="10" fill="#9198a1" text-anchor="end">120</text>
+<line x1="470.5" y1="56.5" x2="728.5" y2="56.5" stroke="#3d444d" stroke-width="1"/>
+<text x="464.5" y="60.5" font-size="10" fill="#9198a1" text-anchor="end">160</text>
+<circle cx="599.5" cy="63.8" r="2" fill="#656c76"><title>xz 152 MB/s at df9dd34</title></circle>
+<circle cx="599.5" cy="121.3" r="2.5" fill="#4493f8"><title>slz 89 MB/s at df9dd34</title></circle>
+<text x="736.5" y="67.8" font-size="11" fill="#9198a1">xz 152</text>
+<text x="736.5" y="125.3" font-size="11" fill="#f0f6fc" font-weight="600">slz 89</text>
+<text x="599.5" y="218.5" font-size="10" fill="#9198a1" text-anchor="middle">df9dd34 · 2026-11-13</text>
+<text x="1.0" y="249.0" font-size="11" fill="#9198a1">Each point is one run on main (a push or a manual run), measured on a GitHub-hosted runner. The competitors run in the same job, so a shift shared by</text>
+<text x="1.0" y="264.0" font-size="11" fill="#9198a1">every line comes from the runner, not from slz.</text>
+</svg>
