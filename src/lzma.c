@@ -151,48 +151,76 @@ static inline unsigned bit(rcs *rc, uint16_t *p) {
     return 1;
 }
 
-/* Branch-free variant for literal bits, which are close to random: the update is computed with a
- * mask instead of a mispredicted branch. Same arithmetic as bit(). */
-static inline unsigned bit_nb(rcs *rc, uint16_t *p) {
-    uint32_t pr = *p, bound, one;
+/* Branch-free bit for the bit trees, whose bits are close to random: the update is computed with
+ * a mask instead of a mispredicted branch. pr is *p, already loaded. Returns 0 - bit. Same
+ * arithmetic as bit(); the probability update is the LZMA SDK's / xz's single expression. */
+#define PROB_OFF ((1u << 5) - 1 - 2048) /* bit 0: pr - ((pr + PROB_OFF) >> 5) = pr + ((2048 - pr) >> 5) */
+static inline uint32_t bitm(rcs *rc, uint16_t *p, uint32_t pr) {
+    uint32_t bound, m;
     rc_norm(rc);
     bound = (rc->range >> 11) * pr;
-    one = 0u - (uint32_t)(rc->code >= bound); /* all ones when the bit is 1 */
-    rc->range = (bound & ~one) | ((rc->range - bound) & one);
-    rc->code -= bound & one;
-    *p = (uint16_t)(pr + (((2048 - pr) >> 5) & ~one) - ((pr >> 5) & one));
-    return one & 1;
+    m = 0u - (uint32_t)(rc->code >= bound); /* all ones when the bit is 1 */
+    rc->range = (bound & ~m) | ((rc->range - bound) & m);
+    rc->code -= bound & m;
+    *p = (uint16_t)(pr - ((pr + (PROB_OFF & ~m)) >> 5));
+    return m;
 }
 
-static inline unsigned tree(rcs *rc, uint16_t *p, unsigned bits) { /* MSB-first bit tree */
-    unsigned m = 1;
-    while (m < (1u << bits))
-        m = m << 1 | bit(rc, &p[m]);
-    return m - (1u << bits);
-}
-
-static inline unsigned rtree(rcs *rc, uint16_t *p, unsigned bits) { /* LSB-first bit tree */
-    unsigned m = 1, r = 0, i;
-    for (i = 0; i < bits; i++) {
-        unsigned b = bit(rc, &p[m]);
-        m = m << 1 | b;
-        r |= b << i;
+/* MSB-first bit tree, p[1] the root. Each level loads the probabilities of both children of its
+ * node before its bit is known, so the next level does not wait for a load. */
+static inline unsigned tree(rcs *rc, uint16_t *p, unsigned bits) {
+    unsigned m = 1, i;
+    uint32_t pr = p[1];
+    for (i = 1; i < bits; i++) {
+        uint32_t c0 = p[2 * m], c1 = p[2 * m + 1], k = bitm(rc, p + m, pr);
+        m = 2 * m - k;
+        pr = c0 ^ ((c0 ^ c1) & k);
     }
-    return r;
+    return 2 * m - bitm(rc, p + m, pr) - (1u << bits);
 }
 
-static inline uint32_t direct(rcs *rc, unsigned bits) {
+static inline unsigned rtree(rcs *rc, uint16_t *p, unsigned bits) { /* LSB-first bit tree, bits >= 1 */
+    unsigned m = 1, r = 0, i;
+    uint32_t pr = p[1], k;
+    for (i = 0; i + 1 < bits; i++) {
+        uint32_t c0 = p[2 * m], c1 = p[2 * m + 1];
+        k = bitm(rc, p + m, pr);
+        m = 2 * m - k;
+        r |= (k & 1) << i;
+        pr = c0 ^ ((c0 ^ c1) & k);
+    }
+    k = bitm(rc, p + m, pr);
+    return r | (k & 1) << i;
+}
+
+/* literal after a match, decoded against the byte at rep0 (as in xz): offs is 0x100 while the
+ * decoded bits equal the match byte's, 0 afterwards (plain literal probabilities) */
+static inline unsigned matched(rcs *rc, uint16_t *p, unsigned mb) {
+    unsigned offs = 0x100, sym = 1, i;
+    for (i = 0; i < 8; i++) {
+        unsigned mbit, j;
+        uint32_t k;
+        mb <<= 1;
+        mbit = mb & offs;
+        j = offs + mbit + sym;
+        k = bitm(rc, p + j, p[j]);
+        sym = 2 * sym - k;
+        offs &= ~mbit ^ k;
+    }
+    return sym & 0xff;
+}
+
+static inline uint32_t direct(rcs *rc, unsigned bits) { /* bits >= 1, branch-free as in xz */
     uint32_t r = 0;
-    while (bits--) {
+    do {
+        uint32_t t;
         rc_norm(rc);
         rc->range >>= 1;
-        if (rc->code >= rc->range) {
-            rc->code -= rc->range;
-            r = r << 1 | 1;
-        } else {
-            r <<= 1;
-        }
-    }
+        rc->code -= rc->range;
+        t = 0u - (rc->code >> 31); /* all ones when the bit is 0 */
+        rc->code += rc->range & t;
+        r = (r << 1) + t + 1;
+    } while (--bits);
     return r;
 }
 
@@ -286,24 +314,13 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
             if (s->err) break;
         }
         if (!bit(&rc, &s->m.is_match[state][ps])) { /* literal */
-            unsigned prev = pos ? dict[dpos ? dpos - 1 : dsize - 1] : 0, sym = 1;
+            unsigned prev = pos ? dict[dpos ? dpos - 1 : dsize - 1] : 0, sym;
             uint16_t *p = s->lit + 0x300 * ((((unsigned)pos & lpm) << lc) + (prev >> (8 - lc)));
             if (state >= 7) { /* after a match: decode against the byte at rep0 */
                 unsigned mb = rep0 < pos ? dict[dpos > rep0 ? dpos - rep0 - 1 : dpos + dsize - rep0 - 1] : 0;
-                /* branch-free form (as in the LZMA SDK): offs is 0x100 while the decoded bits
-                 * still equal the match byte's bits, 0 afterwards (plain literal probabilities) */
-                unsigned offs = 0x100;
-                do {
-                    unsigned bitv = offs, b;
-                    mb <<= 1;
-                    offs &= mb;
-                    b = bit_nb(&rc, &p[offs + bitv + sym]);
-                    sym = sym << 1 | b;
-                    offs ^= bitv & (b - 1); /* bit 0: keep following the match byte only if it was 0 too */
-                } while (sym < 0x100);
+                sym = matched(&rc, p, mb);
             } else {
-                while (sym < 0x100)
-                    sym = sym << 1 | bit_nb(&rc, &p[sym]);
+                sym = tree(&rc, p, 8);
             }
             PUT((uint8_t)sym);
             pos++;
