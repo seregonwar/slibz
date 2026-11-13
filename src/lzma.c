@@ -15,6 +15,7 @@
 #define LZ_IBUF   (1u << 16) /* input buffer */
 #define LZ_NEED   32         /* input bytes buffered at a symbol start: one symbol reads at most 20 */
 #define LZ_FLUSH  (1u << 20) /* hand output to wr at least every 1 MiB */
+#define LZ_SLACK  16         /* bytes after the dictionary for 8-byte match copies running past its end */
 #define PROB_INIT 1024
 
 typedef struct {
@@ -55,7 +56,7 @@ lzd *lzd_new(uint64_t dict_size, uint64_t total_out) {
     if (n < 4096) n = 4096;
     if (n > SIZE_MAX / 2) return NULL;
     if (!(s = (lzd *)calloc(1, sizeof *s))) return NULL;
-    if (!(s->dict = (uint8_t *)malloc((size_t)n))) {
+    if (!(s->dict = (uint8_t *)calloc((size_t)n + LZ_SLACK, 1))) {
         free(s);
         return NULL;
     }
@@ -395,20 +396,53 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
             /* copy in runs that are contiguous on both sides of the circular window; a forward
              * byte copy is correct for overlapping runs (distance < length) */
             from = dpos > rep0 ? dpos - rep0 - 1 : dpos + dsize - rep0 - 1;
-            while (len) {
-                size_t k = len, i;
-                if (k > dsize - dpos) k = dsize - dpos;
-                if (k > dsize - from) k = dsize - from;
-                for (i = 0; i < k; i++)
-                    dict[dpos + i] = dict[from + i];
-                dpos += k;
-                from += k;
-                len -= (unsigned)k;
-                if (from == dsize) from = 0;
+            if (len <= dsize - dpos && len <= dsize - from) { /* contiguous on both sides */
+                uint8_t *dst = dict + dpos, *end = dst + len;
+                const uint8_t *src = dict + from;
+                dpos += len;
+                if (rep0 >= 7) {
+                    /* the source is at least 8 bytes behind the destination (or ahead of it), so
+                     * 8-byte forward copies give the byte-by-byte result. They can run up to 7
+                     * bytes past the end (LZ_SLACK), over older history: restore it. */
+                    uint64_t t, keep;
+                    memcpy(&keep, end, 8);
+                    do {
+                        memcpy(&t, src, 8);
+                        memcpy(dst, &t, 8);
+                        src += 8;
+                        dst += 8;
+                    } while (dst < end);
+                    memcpy(end, &keep, 8);
+                } else if (rep0 == 0) { /* here the source is the byte before the destination */
+                    memset(dst, *src, len);
+                } else {
+                    do
+                        *dst++ = *src++;
+                    while (dst < end);
+                }
                 if (dpos == dsize) {
                     s->dpos = dpos;
                     wrap(s);
                     dpos = 0;
+                }
+            } else {
+                /* copy in runs that are contiguous on both sides of the circular window; a forward
+                 * byte copy is correct for overlapping runs (distance < length) */
+                while (len) {
+                    size_t k = len, i;
+                    if (k > dsize - dpos) k = dsize - dpos;
+                    if (k > dsize - from) k = dsize - from;
+                    for (i = 0; i < k; i++)
+                        dict[dpos + i] = dict[from + i];
+                    dpos += k;
+                    from += k;
+                    len -= (unsigned)k;
+                    if (from == dsize) from = 0;
+                    if (dpos == dsize) {
+                        s->dpos = dpos;
+                        wrap(s);
+                        dpos = 0;
+                    }
                 }
             }
         }
