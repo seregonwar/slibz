@@ -142,18 +142,28 @@ static inline int bits(inf *s, unsigned n, unsigned *v) {
 #define DTM ((1u << DT_BITS) - 1)
 enum { K_PLAIN, K_LITLEN, K_DIST };
 
-/* entry for symbol `sym` of alphabet `kind` with codeword length l (relative to the table) */
-static uint32_t entry(int kind, unsigned sym, unsigned l) {
-    uint32_t c = l | l << 8;
+/* entry for symbol `sym` of alphabet `kind` without its codeword length l, which the table
+ * builder adds as l | l << 8 (no carry: l + extra bits <= 28) */
+static uint32_t entry(int kind, unsigned sym) {
     if (kind == K_LITLEN) {
-        if (sym < 256) return LIT | sym << 16 | c;
-        if (sym == 256) return EOB | EXC | c;
-        if (sym < 286) return (uint32_t)lbase[sym - 257] << 16 | (c + lext[sym - 257]);
+        if (sym < 256) return LIT | sym << 16;
+        if (sym == 256) return EOB | EXC;
+        if (sym < 286) return (uint32_t)lbase[sym - 257] << 16 | lext[sym - 257];
         return BAD; /* 286, 287: exist in the fixed code but are invalid */
     }
-    if (kind == K_DIST) return sym < 30 ? (uint32_t)dbase[sym] << 16 | (c + dext[sym]) : BAD;
-    return sym << 16 | c;
+    if (kind == K_DIST) return sym < 30 ? (uint32_t)dbase[sym] << 16 | dext[sym] : BAD;
+    return sym << 16;
 }
+
+/* bit-reversed bytes: deflate sends codewords MSB-first into an LSB-first bit stream */
+#define R2(n) n, n + 128, n + 64, n + 192
+#define R4(n) R2(n), R2(n + 32), R2(n + 16), R2(n + 48)
+#define R6(n) R4(n), R4(n + 8), R4(n + 4), R4(n + 12)
+static const uint8_t rev8[256] = {R6(0), R6(2), R6(1), R6(3)};
+#undef R2
+#undef R4
+#undef R6
+#define REV(c, l) ((unsigned)(rev8[(c) & 255] << 8 | rev8[(c) >> 8]) >> (16 - (l))) /* c < 2^l, l <= 15 */
 
 /* Canonical Huffman code lengths -> table with 2^bits primary entries (codes shorter than
  * bits are replicated; longer ones go to subtables of 2^(max - bits) entries, one per distinct
@@ -161,44 +171,40 @@ static uint32_t entry(int kind, unsigned sym, unsigned l) {
  * Same acceptance rules as zlib: over-subscribed codes are invalid; incomplete codes are invalid
  * except an empty code or a single code of length 1 (lit/len and distance trees only). */
 static int build(uint32_t *t, const uint8_t *len, unsigned n, int kind, unsigned bits) {
-    unsigned cnt[16] = {0}, off[16], max = 0, i, l, k, rev = 0, used, sb;
-    uint16_t sym[320];
+    unsigned cnt[16] = {0}, off[16], max, i, l, k, code, used, sb;
+    uint32_t ent[320];
     int left = 1;
-    for (i = 0; i < n; i++) {
+    for (i = 0; i < n; i++)
         cnt[len[i]]++;
-        if (len[i] > max) max = len[i];
-    }
+    for (max = 15; max && !cnt[max]; max--)
+        ;
     for (i = 1; i < 16; i++) {
         left = (left << 1) - (int)cnt[i];
         if (left < 0) return 0;
     }
     if (left > 0 && (kind == K_PLAIN || max > 1)) return 0;
-    for (off[1] = 0, i = 1; i < 15; i++)
+    for (off[0] = 0, i = 0; i < 15; i++)
         off[i + 1] = off[i] + cnt[i];
-    for (i = 0; i < n; i++) /* symbols sorted by (length, value) = canonical code order */
-        if (len[i]) sym[off[len[i]]++] = (uint16_t)i;
+    for (i = 0; i < n; i++) /* entries sorted by (length, value) = canonical code order, unused first */
+        ent[off[len[i]]++] = entry(kind, i);
     /* Primary table, shortest codes first: after placing the codes of length l in the first
-     * 2^l entries, double the table (the next index bit is "don't care" for them). `rev` is
-     * the current codeword bit-reversed (deflate is LSB-first); appending a 0 to a codeword
-     * leaves its reversal unchanged, so only the increment needs care. */
+     * 2^l entries, double the table (the next index bit is "don't care" for them). Codewords
+     * are consecutive within a length; a longer length appends a 0 bit. */
     t[0] = t[1] = BAD;
-    for (i = 0, l = 1; l <= bits; l++) {
-        for (k = 0; k < cnt[l]; k++) {
-            unsigned b = 1u << (l - 1);
-            t[rev] = entry(kind, sym[i++], l);
-            while (rev & b) /* increment the bit-reversed codeword */
-                b >>= 1;
-            rev = (rev & (b - 1)) | b;
-        }
+    for (i = cnt[0], code = 0, l = 1; l <= bits; l++, code <<= 1) {
+        uint32_t c = l | l << 8;
+        for (k = 0; k < cnt[l]; k++, code++)
+            t[REV(code, l)] = ent[i++] + c;
         if (l < bits) memcpy(t + ((size_t)1 << l), t, sizeof *t * ((size_t)1 << l));
     }
     if (max <= bits) return 1;
     sb = max - bits;
     used = 1u << bits;
-    for (; l <= max; l++) {
-        for (k = 0; k < cnt[l]; k++) {
-            uint32_t *p = &t[rev & ((1u << bits) - 1)], v = entry(kind, sym[i++], l - bits);
-            unsigned b = 1u << (l - 1), j;
+    for (; l <= max; l++, code <<= 1) {
+        uint32_t c = (l - bits) | (l - bits) << 8;
+        for (k = 0; k < cnt[l]; k++, code++) {
+            unsigned rev = REV(code, l), j;
+            uint32_t *p = &t[rev & ((1u << bits) - 1)], v = ent[i++] + c;
             if (!(*p & SUB)) { /* first long code with this prefix: allocate its subtable */
                 *p = used << 16 | EXC | SUB | sb << 8 | bits;
                 for (j = 0; j < 1u << sb; j++)
@@ -207,13 +213,11 @@ static int build(uint32_t *t, const uint8_t *len, unsigned n, int kind, unsigned
             }
             for (j = rev >> bits; j < 1u << sb; j += 1u << (l - bits))
                 t[(*p >> 16) + j] = v;
-            while (rev & b)
-                b >>= 1;
-            rev = (rev & (b - 1)) | b;
         }
     }
     return 1;
 }
+#undef REV
 
 int inf_flush(inf *s) {
     int r = s->op > s->of ? s->wr(s->wu, s->ob + s->of, s->op - s->of) : 0;
@@ -230,52 +234,76 @@ int inf_flush(inf *s) {
 /* dynamic block header: code-length code, then the literal/length and distance codes */
 static int dynamic(inf *s) {
     static const uint8_t ord[19] = {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
-    uint8_t L[320] = {0};
-    unsigned hlit, hdist, hclen, i, v;
-    int r;
-    if ((r = bits(s, 5, &hlit)) || (r = bits(s, 5, &hdist)) || (r = bits(s, 4, &hclen))) return r;
-    hlit += 257;
-    hdist += 1;
-    hclen += 4;
-    if (hlit > 286 || hdist > 30) return SLZ_E_CORRUPT;
-    for (i = 0; i < hclen; i++) {
-        if ((r = bits(s, 3, &v))) return r;
-        L[ord[i]] = (uint8_t)v;
+    uint8_t L[320 + 138]; /* slack for the fixed-size stores of the repeat codes */
+    uint64_t bb = s->bb;
+    unsigned bn = s->bn, hlit, hdist, hclen, i, n;
+    const uint8_t *p = s->p;
+    int r = SLZ_E_CORRUPT;
+/* the bit buffer lives in locals; make >= k bits valid like refill(), inline while 8 input
+ * bytes are buffered */
+#define NEED(k)                                                                                              \
+    if (bn < (k)) {                                                                                          \
+        if (s->e - p >= 8) {                                                                                 \
+            bb |= ld64(p) << bn;                                                                             \
+            p += (63 - bn) >> 3;                                                                             \
+            bn |= 56;                                                                                        \
+        } else {                                                                                             \
+            s->bb = bb, s->bn = bn, s->p = p;                                                                \
+            if ((r = refill(s))) return r;                                                                   \
+            bb = s->bb, bn = s->bn, p = s->p;                                                                \
+            r = SLZ_E_CORRUPT;                                                                               \
+        }                                                                                                    \
     }
-    if (!build(s->dt, L, 19, K_PLAIN, 7)) return SLZ_E_CORRUPT;
+#define DROP(k) (bb >>= (k), bn -= (k))
+    NEED(14);
+    hlit = (unsigned)(bb & 31) + 257;
+    hdist = (unsigned)(bb >> 5 & 31) + 1;
+    hclen = (unsigned)(bb >> 10 & 15) + 4;
+    DROP(14);
+    if (hlit > 286 || hdist > 30) goto out;
     memset(L, 0, 19);
-    for (i = 0; i < hlit + hdist;) {
-        unsigned e, sym, rep, val = 0;
-        if (s->bn < 16 && (r = refill(s))) return r;
-        e = s->dt[s->bb & 127];
-        if (e & EXC) return SLZ_E_CORRUPT;
-        s->bb >>= e & 63;
-        s->bn -= e & 63;
+    for (i = 0; i < hclen; i++) {
+        NEED(3);
+        L[ord[i]] = (uint8_t)(bb & 7);
+        DROP(3);
+    }
+    if (!build(s->dt, L, 19, K_PLAIN, 7)) goto out;
+    for (i = 0, n = hlit + hdist; i < n;) {
+        uint32_t e;
+        unsigned sym;
+        NEED(7 + 7);
+        e = s->dt[bb & 127];
+        if (e & EXC) goto out;
+        DROP(e & 63);
         sym = e >> 16;
         if (sym < 16) {
             L[i++] = (uint8_t)sym;
             continue;
         }
+        /* repeat codes store their maximum count, then advance by the actual one */
         if (sym == 16) {
-            if (!i) return SLZ_E_CORRUPT;
-            val = L[i - 1];
-            r = bits(s, 2, &rep);
-            rep += 3;
+            if (!i) goto out;
+            memset(L + i, L[i - 1], 6);
+            i += 3 + (unsigned)(bb & 3);
+            DROP(2);
         } else if (sym == 17) {
-            r = bits(s, 3, &rep);
-            rep += 3;
+            memset(L + i, 0, 10);
+            i += 3 + (unsigned)(bb & 7);
+            DROP(3);
         } else {
-            r = bits(s, 7, &rep);
-            rep += 11;
+            memset(L + i, 0, 138);
+            i += 11 + (unsigned)(bb & 127);
+            DROP(7);
         }
-        if (r) return r;
-        if (i + rep > hlit + hdist) return SLZ_E_CORRUPT;
-        while (rep--)
-            L[i++] = (uint8_t)val;
+        if (i > n) goto out;
     }
-    if (!L[256] || !build(s->lt, L, hlit, K_LITLEN, LT_BITS) || !build(s->dt, L + hlit, hdist, K_DIST, DT_BITS))
-        return SLZ_E_CORRUPT;
-    return 0;
+    if (L[256] && build(s->lt, L, hlit, K_LITLEN, LT_BITS) && build(s->dt, L + hlit, hdist, K_DIST, DT_BITS))
+        r = 0;
+out:
+    s->bb = bb, s->bn = bn, s->p = p;
+    return r;
+#undef NEED
+#undef DROP
 }
 
 /* Margins for the fast loop. Input: from a position checked against FAST_IN, at most 4 refills
