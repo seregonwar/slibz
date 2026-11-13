@@ -158,6 +158,8 @@ struct inf {
     uint8_t *ib;
     uint8_t *ob; /* output: [0, op) = history + new output; [of, op) not yet written */
     size_t op, of;
+    size_t oe;  /* size of ob: OBUF, or the caller's buffer in direct mode */
+    int direct; /* slz_inflate: ib/ob are the caller's buffers (no rd, wr, flush or ck) */
     uint64_t obase; /* total output index of ob[0] */
     rd_fn rd;
     wr_fn wr;

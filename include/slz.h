@@ -78,6 +78,16 @@ int slz_extract(slz_archive *a, const char *dest, slz_opts *opts);
 uint32_t slz_crc32(uint32_t crc, const void *p, size_t n);
 const char *slz_strerror(int err);
 
+/* Raw DEFLATE (RFC 1951) in memory, zero-copy: decodes the stream at the start of in[0, in_len)
+ * straight into out[0, out_cap), with no intermediate buffer or callback. On success returns
+ * SLZ_OK, *out_len = bytes decoded and *in_used = bytes of input up to the end of the final block
+ * (anything after it, e.g. a gzip/zlib trailer, is left alone); either pointer may be NULL, and
+ * both values are 0 on error.
+ * Errors: SLZ_E_CORRUPT (invalid or truncated stream), SLZ_E_LIMIT (out_cap too small),
+ * SLZ_E_NOMEM. out[*out_len, out_cap) may be overwritten (scratch for the fast copies), and
+ * on error so may all of out. Thread-safe; one ~43 KiB allocation (decode tables) per call. */
+int slz_inflate(const void *in, size_t in_len, void *out, size_t out_cap, size_t *in_used, size_t *out_len);
+
 #ifdef __cplusplus
 }
 #endif
