@@ -29,7 +29,7 @@ if [ "$arch" = x86_64 ] && [ "$job" = gcc ]; then
         "-fno-tree-loop-distribution -fno-tree-loop-distribute-patterns" -fno-ipa-cp-clone \
         -fno-version-loops-for-strides; do
         # shellcheck disable=SC2086
-        ONLY="ml7 c16 rg8" r bench gcc -O3 $f
+        ONLY="c16 rg8 cm9" r bench gcc -O3 $f
     done
     CC=gcc r fuzz "$ITERS" 1 2
 elif [ "$arch" = x86_64 ]; then
