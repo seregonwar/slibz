@@ -368,6 +368,25 @@ static inline unsigned matched(rcs *rc, uint16_t *p, unsigned mb) {
     return (2 * sym - k) & 0xff;
 }
 
+#ifdef LZ_X86ASM
+static inline uint32_t direct(rcs *rc, unsigned bits) { /* bits >= 1; xz's asm loop: code - range/2 < 0 is a 0 */
+    uint32_t r = 0, t0, t1;
+    __asm__("2:\n\t"
+            "add %[r], %[r]\n\t"
+            "lea 1(%q[r]), %[t1]\n\t" LZA_NORM "shr $1, %[range]\n\t"
+            "mov %[code], %[t0]\n\t"
+            "sub %[range], %[code]\n\t"
+            "cmovns %[t1], %[r]\n\t"
+            "cmovs %[t0], %[code]\n\t"
+            "dec %[n]\n\t"
+            "jnz 2b"
+            : [range] "+&r"(rc->range), [code] "+&r"(rc->code), [t0] "=&r"(t0), [t1] "=&r"(t1), [r] "+&r"(r),
+              [n] "+&r"(bits), [ip] "+&r"(rc->ip)
+            :
+            : "cc", "memory");
+    return r;
+}
+#else
 static inline uint32_t direct(rcs *rc, unsigned bits) { /* bits >= 1, branch-free as in xz */
     uint32_t r = 0;
     do {
@@ -381,6 +400,7 @@ static inline uint32_t direct(rcs *rc, unsigned bits) { /* bits >= 1, branch-fre
     } while (--bits);
     return r;
 }
+#endif
 
 /* ---------------- dictionary ---------------- */
 
