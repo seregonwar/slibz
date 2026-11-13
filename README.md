@@ -2,11 +2,11 @@
 
 Written by [`.github/workflows/bench.yml`](https://github.com/seregonwar/slibz/blob/main/.github/workflows/bench.yml) after every push to `main` that touches the code; the [README](https://github.com/seregonwar/slibz#readme) embeds the banners and badges from this branch and [docs/benchmarks.md](https://github.com/seregonwar/slibz/blob/main/docs/benchmarks.md) explains them. Generated files: don't edit them by hand.
 
-**Newest run:** [`8cd2f55`](https://github.com/seregonwar/slibz/commit/8cd2f5591e519f35b14e29bfe5b8dcb6b3a9239c) api: slz_version_number, slz_version_string and SLZ_VERSION_* macros · measured 2026-11-13 21:00:42 UTC · [workflow run](https://github.com/seregonwar/slibz/actions/runs/43506213601)
+**Newest run:** [`9450737`](https://github.com/seregonwar/slibz/commit/945073798aa98c0aa916a6dcf29bbbc771fea775) bench: compare only with the nearest ancestor's run on the same setup · measured 2026-11-13 21:14:29 UTC · [workflow run](https://github.com/seregonwar/slibz/actions/runs/43508378314)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/seregonwar/slibz/bench-data/svg/hero-dark.svg">
-  <img alt="DEFLATE decode (higher is better): slz 960 MB/s, libdeflate 1102 MB/s, zlib-ng 796 MB/s, zlib 462 MB/s; LZMA2 decode (higher is better): slz 146 MB/s, xz 152 MB/s; list 500k zip entries (lower is better): slz 96 ms, unzip 860 ms, Python 2030 ms, bsdtar 2803 ms, 7-Zip 4039 ms; extract silesia.zip (lower is better): slz 0.10 s, slz -j 1 0.27 s, bsdtar 0.35 s, Python 0.69 s, 7-Zip 0.82 s, unzip 1.15 s; extract silesia.tar.gz (lower is better): slz 0.27 s, bsdtar 0.38 s, pigz | tar 0.42 s, GNU tar 1.08 s; extract silesia-nonsolid.7z (lower is better): slz 0.75 s, slz -j 1 1.71 s, 7-Zip 1.62 s, bsdtar 1.64 s; extract silesia.7z (solid) (lower is better): slz 1.11 s, slz -j 1 1.67 s, 7-Zip 1.10 s, bsdtar 1.64 s." src="https://raw.githubusercontent.com/seregonwar/slibz/bench-data/svg/hero-light.svg">
+  <img alt="DEFLATE decode (higher is better): slz 969 MB/s, libdeflate 1103 MB/s, zlib-ng 796 MB/s, zlib 462 MB/s; LZMA2 decode (higher is better): slz 151 MB/s, xz 155 MB/s; list 500k zip entries (lower is better): slz 97 ms, unzip 791 ms, Python 1945 ms, bsdtar 2800 ms, 7-Zip 4067 ms; extract silesia.zip (lower is better): slz 0.10 s, slz -j 1 0.26 s, bsdtar 0.34 s, Python 0.68 s, 7-Zip 0.82 s, unzip 1.15 s; extract silesia.tar.gz (lower is better): slz 0.27 s, bsdtar 0.38 s, pigz | tar 0.42 s, GNU tar 1.09 s; extract silesia-nonsolid.7z (lower is better): slz 0.67 s, slz -j 1 1.57 s, 7-Zip 1.56 s, bsdtar 1.56 s; extract silesia.7z (solid) (lower is better): slz 1.02 s, slz -j 1 1.50 s, 7-Zip 1.04 s, bsdtar 1.52 s." src="https://raw.githubusercontent.com/seregonwar/slibz/bench-data/svg/hero-light.svg">
 </picture>
 
 <picture>
@@ -16,17 +16,17 @@ Written by [`.github/workflows/bench.yml`](https://github.com/seregonwar/slibz/b
 
 ## Newest run
 
-GitHub Actions (Ubuntu 24.04.5 LTS, image 20261101.360.1; AMD EPYC 9V74, 4 threads), gcc 13.3.0.
+GitHub Actions (Ubuntu 24.04.5 LTS, image 20261111.370.1; AMD EPYC 9V74, 4 threads), gcc 13.3.0.
 
 | workload | slz | the others, same job |
 |---|---:|---|
-| DEFLATE decode (MB/s, higher is better) | **960 MB/s** | libdeflate 1102 MB/s · zlib-ng 796 MB/s · zlib 462 MB/s |
-| LZMA2 decode (MB/s, higher is better) | **146 MB/s** | xz 152 MB/s |
-| list 500k zip entries (lower is better) | **96 ms** | unzip 860 ms · Python 2030 ms · bsdtar 2803 ms · 7-Zip 4039 ms |
-| extract silesia.zip (lower is better) | **0.10 s** · slz -j 1: 0.27 s | bsdtar 0.35 s · Python 0.69 s · 7-Zip 0.82 s · unzip 1.15 s |
-| extract silesia.tar.gz (lower is better) | **0.27 s** | bsdtar 0.38 s · pigz \| tar 0.42 s · GNU tar 1.08 s |
-| extract silesia-nonsolid.7z (lower is better) | **0.75 s** · slz -j 1: 1.71 s | 7-Zip 1.62 s · bsdtar 1.64 s |
-| extract silesia.7z (solid) (lower is better) | **1.11 s** · slz -j 1: 1.67 s | 7-Zip 1.10 s · bsdtar 1.64 s |
+| DEFLATE decode (MB/s, higher is better) | **969 MB/s** | libdeflate 1103 MB/s · zlib-ng 796 MB/s · zlib 462 MB/s |
+| LZMA2 decode (MB/s, higher is better) | **151 MB/s** | xz 155 MB/s |
+| list 500k zip entries (lower is better) | **97 ms** | unzip 791 ms · Python 1945 ms · bsdtar 2800 ms · 7-Zip 4067 ms |
+| extract silesia.zip (lower is better) | **0.10 s** · slz -j 1: 0.26 s | bsdtar 0.34 s · Python 0.68 s · 7-Zip 0.82 s · unzip 1.15 s |
+| extract silesia.tar.gz (lower is better) | **0.27 s** | bsdtar 0.38 s · pigz \| tar 0.42 s · GNU tar 1.09 s |
+| extract silesia-nonsolid.7z (lower is better) | **0.67 s** · slz -j 1: 1.57 s | 7-Zip 1.56 s · bsdtar 1.56 s |
+| extract silesia.7z (solid) (lower is better) | **1.02 s** · slz -j 1: 1.50 s | 7-Zip 1.04 s · bsdtar 1.52 s |
 
 Versions: zlib 1.4, zlib-ng 2.3.3, libdeflate 1.26, xz 5.8.4, 7-Zip 26.06, bsdtar 3.8.11, unzip 6.00, GNU tar 1.35, pigz 2.8, Python 3.12.3.
 
@@ -36,6 +36,7 @@ slz's value, then how many times faster it is than the format's standard tool in
 
 | measured | commit | DEFLATE decode, vs zlib | LZMA2 decode, vs xz | list 500k zip entries, vs unzip | extract silesia.zip, vs unzip | extract silesia.tar.gz, vs GNU tar | extract silesia-nonsolid.7z, vs 7-Zip | extract silesia.7z (solid), vs 7-Zip | CPU |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| [2026-11-13](https://github.com/seregonwar/slibz/actions/runs/43508378314) | [`9450737`](https://github.com/seregonwar/slibz/commit/945073798aa98c0aa916a6dcf29bbbc771fea775) | 969 · 2.1× | 151 · 0.97× | 97 · 8.2× | 0.10 · 12× | 0.27 · 4.0× | 0.67 · 2.3× | 1.02 · 1.02× | AMD EPYC 9V74 |
 | [2026-11-13](https://github.com/seregonwar/slibz/actions/runs/43506213601) | [`8cd2f55`](https://github.com/seregonwar/slibz/commit/8cd2f5591e519f35b14e29bfe5b8dcb6b3a9239c) | 960 · 2.1× | 146 · 0.96× | 96 · 8.9× | 0.10 · 12× | 0.27 · 4.0× | 0.75 · 2.2× | 1.11 · 0.99× | AMD EPYC 9V74 |
 | [2026-11-13](https://github.com/seregonwar/slibz/actions/runs/43504613608) | [`038d606`](https://github.com/seregonwar/slibz/commit/038d60618148ed5f8dd161842d7e423b519af283) | 967 · 2.1× | 147 · 0.96× | 97 · 8.8× | 0.09 · 12× | 0.27 · 4.0× | 0.70 · 2.2× | 1.04 · 1.02× | AMD EPYC 9V74 |
 | [2026-11-13](https://github.com/seregonwar/slibz/actions/runs/43470064535) | [`4da826c`](https://github.com/seregonwar/slibz/commit/4da826cb89c124e3eb157518b5c90ab37bc64774) | 1024 · 2.0× | 152 · 1.01× | 76 · 5.9× | 0.76 · 1.39× | 0.28 · 3.4× | 0.63 · 2.3× | 1.50 · 0.70× | AMD EPYC 9V45 |
