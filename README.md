@@ -6,16 +6,16 @@
 [![LZMA2 decode](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fseregonwar%2Fslibz%2Fbench-data%2Fbadges%2Flzma2.json)](#continuous-benchmarks)
 [![list 500k zip entries](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fseregonwar%2Fslibz%2Fbench-data%2Fbadges%2Flist.json)](#continuous-benchmarks)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/seregonwar/slibz)](https://github.com/seregonwar/slibz/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/seregonwar/slibz?style=flat&logo=github)](https://github.com/seregonwar/slibz/stargazers)
 
 **Fast, hardened archive extraction in C99 + assembly: zip/zip64, 7z, tar, gzip, tar.gz.**
 Lists huge archives in milliseconds, extracts at SSD speed, and can extract *in place*, freeing the
 archive's space as it goes, without needing extra free disk.
 
-<a href="#continuous-benchmarks"><picture>
+<picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/seregonwar/slibz/bench-data/svg/hero-dark.svg">
   <img alt="Wall time of slz, unzip, bsdtar, 7-Zip, GNU tar, pigz and Python listing and extracting zip, tar.gz and 7z archives, and in-memory DEFLATE and LZMA2 decoding speed of slz, zlib, zlib-ng, libdeflate and xz, measured by CI on the latest commit of main" src="https://raw.githubusercontent.com/seregonwar/slibz/bench-data/svg/hero-light.svg">
-</picture></a>
+</picture>
 
 <sub>Redrawn by CI after every push to `main`, on a GitHub-hosted runner: [how it is measured](#continuous-benchmarks) · [detailed tables](#performance)</sub>
 
@@ -395,10 +395,12 @@ Planned:
 
 ## Star history
 
-<a href="https://www.star-history.com/#seregonwar/slibz&Date"><picture>
+<picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=seregonwar/slibz&type=Date&theme=dark">
   <img alt="Star history of seregonwar/slibz" src="https://api.star-history.com/svg?repos=seregonwar/slibz&type=Date">
-</picture></a>
+</picture>
+
+<sub>Chart by [star-history.com](https://www.star-history.com/#seregonwar/slibz&Date).</sub>
 
 ## License
 
