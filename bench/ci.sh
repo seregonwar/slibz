@@ -25,13 +25,13 @@ if [ "$arch" = x86_64 ] && [ "$job" = gcc ]; then
     r bench gcc -O3
     r bench gcc -O2
     r bench clang -O3
-    PROF="base x2" r profile gcc -O2
+    PROF="base t3" r profile gcc -O2
     CC=gcc r fuzz "$ITERS" 1 2
 elif [ "$arch" = x86_64 ]; then
     r bench clang -O3
     r bench gcc -O3
     r bench gcc -O2
-    PROF="base x2" r profile clang -O3
+    PROF="base t3" r profile clang -O3
     CC=clang r fuzz "$ITERS" 3 4
 else
     r bench gcc -O3
