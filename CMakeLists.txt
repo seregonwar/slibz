@@ -12,6 +12,18 @@ option(SLZ_TESTS "Build tests" ${SLZ_TOP})
 option(SLZ_FAULT_INJECTION "Test builds: SLZ_FAULT_AT=N fails the N-th I/O operation" OFF)
 option(SLZ_INSTALL "Generate install rules" ON)
 
+# lzma2-decode-bench only (never merged): this branch cannot carry its own workflow, so the CI A/B
+# LZMA2 benchmark and fuzz run piggyback on ci.yml: its Linux ASan configure runs bench/ci.sh,
+# whose output lands in the job log.
+if(SLZ_SANITIZE AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND DEFINED ENV{GITHUB_ACTIONS} AND NOT SLZ_BENCH_DONE)
+  execute_process(COMMAND bash bench/ci.sh ${CMAKE_C_COMPILER} WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                  RESULT_VARIABLE slz_bench_rc)
+  if(NOT slz_bench_rc EQUAL 0)
+    message(FATAL_ERROR "bench/ci.sh failed: ${slz_bench_rc}")
+  endif()
+  set(SLZ_BENCH_DONE ON CACHE INTERNAL "bench/ci.sh ran for this build tree")
+endif()
+
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
