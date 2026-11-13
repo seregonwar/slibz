@@ -1,11 +1,13 @@
 /* slz - DEFLATE (RFC 1951) decoder.
  * Copyright (c) 2026 Seregon. SPDX-License-Identifier: MIT
  *
- * Streaming in and out through callbacks, 64-bit bit buffer, two-level Huffman tables whose
- * entries carry everything the hot loop needs (bits to consume including extra bits, codeword
- * length, base value, flags), a fast loop that runs while the input and output buffers have
- * margin for a whole symbol, and a careful one-symbol path near the end of the input. A
- * checkpoint hook runs at every block boundary (destructive extraction resumes from there).
+ * Streaming in and out through callbacks (slz_inflate: straight from and into the caller's
+ * buffers, with its own instance of the hot loop), 64-bit bit buffer, two-level Huffman tables
+ * whose entries carry everything the hot loop needs (bits to consume including extra bits,
+ * codeword length, base value, flags), a fast loop that runs while the input and output buffers
+ * have margin for a whole symbol, and a careful one-symbol path near the end of the input (or of
+ * slz_inflate's output buffer). A checkpoint hook runs at every block boundary (destructive
+ * extraction resumes from there).
  * Acceptance rules match zlib exactly (verified by tests/fuzz_inflate.c); every table, window
  * and buffer access is bounded by construction. */
 #include "internal.h"
@@ -49,17 +51,23 @@ static inline uint64_t ld64(const uint8_t *p) {
     return v;
 }
 
+static int has_bmi2(void) {
+#ifdef INF_BMI2
+    __builtin_cpu_init();
+    return __builtin_cpu_supports("bmi2") != 0;
+#else
+    return 0;
+#endif
+}
+
 inf *inf_new(void) {
     inf *s = (inf *)malloc(sizeof(inf) + IBUF + 8 + OBUF + 16);
     if (s) {
         s->ib = (uint8_t *)(s + 1);
         s->ob = s->ib + IBUF + 8;
-#ifdef INF_BMI2
-        __builtin_cpu_init();
-        s->bmi2 = __builtin_cpu_supports("bmi2") != 0;
-#else
-        s->bmi2 = 0;
-#endif
+        s->oe = OBUF;
+        s->direct = 0;
+        s->bmi2 = has_bmi2();
     }
     return s;
 }
@@ -355,13 +363,17 @@ static inline void copy_match(uint8_t *o, size_t d, unsigned len) {
 }
 
 /* Decode one Huffman block until end-of-block. The bit buffer, input and output cursors live
- * in locals (registers); state is synced back around the rare slow paths. */
-INF_INLINE int codes(inf *s) {
+ * in locals (registers); state is synced back around the rare slow paths. direct (a constant
+ * per instance): the output is the caller's buffer ob[0, oe), which is never flushed; the fast
+ * loop runs while a whole iteration fits, the careful path checks every symbol against oe. */
+INF_INLINE int codes(inf *s, const int direct) {
     uint8_t *ob = s->ob;
     uint64_t bb = s->bb, sv;
     unsigned bn = s->bn, len;
     const uint8_t *p = s->p, *pe = s->e;
     size_t op = s->op, d;
+    const size_t oe = direct ? s->oe : OBUF;
+    const size_t ol = oe - FAST_OUT; /* the fast loop runs while op <= ol (direct: and oe >= FAST_OUT) */
     uint32_t e;
     int r;
 #if (defined(__GNUC__) || defined(__clang__)) && defined(__aarch64__)
@@ -382,17 +394,17 @@ INF_INLINE int codes(inf *s) {
 #define CONSUMEX(x) (bb >>= (x) & 63, bn -= (x) & 63)
 #define EXTRA(x)   ((unsigned)((sv & ((1ull << (uint8_t)(x)) - 1)) >> ((x) >> 8 & 63)))
     for (;;) {
-        if (op > OBUF - FAST_OUT) {
+        if (!direct && op > ol) {
             SAVE();
             if ((r = inf_flush(s))) return r;
             LOAD();
         }
-        if (pe - p < FAST_IN && !s->eof) {
+        if (!direct && pe - p < FAST_IN && !s->eof) {
             SAVE();
             if ((r = more_input(s, FAST_IN))) return r;
             LOAD();
         }
-        if (pe - p >= FAST_IN) {
+        if (pe - p >= FAST_IN && (!direct || (oe >= FAST_OUT && op <= ol))) {
             /* Fast loop. Invariant at the top: (u8)bn >= 56 and e = primary entry for bb.
              * Upper bits of bn are garbage: whole entries are subtracted and only the low 8
              * bits count. Bit budget per refill: 2 literals (<= 22) + a length (<= 20, with
@@ -400,7 +412,6 @@ INF_INLINE int codes(inf *s) {
              * (<= 8 + 13 bits from the primary table, <= 28 with a subtable) the loop refills
              * if needed so >= 11 bits remain for the next lookup. */
             const uint8_t *pf = pe - FAST_IN;
-            const size_t of = OBUF - FAST_OUT;
             REFILL();
             e = s->lt[bb & LTM];
             do {
@@ -471,12 +482,12 @@ INF_INLINE int codes(inf *s) {
                 REFILL();
                 copy_match(ob + op, d, len);
                 op += len;
-            } while (p <= pf && op <= of);
+            } while (p <= pf && op <= ol);
             bn &= 255;
             continue;
         }
-        /* careful path near the end of the input: one symbol, refills through the slow refill
-         * (zero padding past the end is caught by inf_run's final check) */
+        /* careful path near the end of the input (direct: or of the output): one symbol, refills
+         * through the slow refill (zero padding past the end is caught by inf_run's final check) */
         if (bn < 48) {
             SAVE();
             if ((r = refill(s))) return r;
@@ -490,6 +501,7 @@ INF_INLINE int codes(inf *s) {
         sv = bb;
         CONSUMEX(e);
         if (e & LIT) {
+            if (direct && op == oe) return SLZ_E_LIMIT;
             ob[op++] = (uint8_t)(e >> 16);
             continue;
         }
@@ -508,7 +520,15 @@ INF_INLINE int codes(inf *s) {
         CONSUMEX(e);
         d = (e >> 16) + EXTRA(e);
         if (d > op) return SLZ_E_CORRUPT;
-        copy_match(ob + op, d, len);
+        if (direct && oe - op < len + 31u) { /* no room for copy_match's overshoot: exact copy */
+            uint8_t *o = ob + op;
+            const uint8_t *m = o - d;
+            unsigned k;
+            if (len > oe - op) return SLZ_E_LIMIT;
+            for (k = 0; k < len; k++)
+                o[k] = m[k];
+        } else
+            copy_match(ob + op, d, len);
         op += len;
     }
     SAVE();
@@ -523,11 +543,17 @@ INF_INLINE int codes(inf *s) {
 }
 
 static INF_NOINLINE int codes_generic(inf *s) {
-    return codes(s);
+    return codes(s, 0);
+}
+static INF_NOINLINE int codes_direct(inf *s) {
+    return codes(s, 1);
 }
 #ifdef INF_BMI2
 __attribute__((target("bmi2"))) static INF_NOINLINE int codes_bmi2(inf *s) {
-    return codes(s);
+    return codes(s, 0);
+}
+__attribute__((target("bmi2"))) static INF_NOINLINE int codes_direct_bmi2(inf *s) {
+    return codes(s, 1);
 }
 #endif
 
@@ -549,7 +575,12 @@ int inf_run(inf *s) {
             if (len != (~nlen & 0xffff)) return SLZ_E_CORRUPT;
             while (len) {
                 size_t k;
-                if (s->op >= OBUF - 8 && (r = inf_flush(s))) return r;
+                if (s->op + 8 >= s->oe) {
+                    if (!s->direct) {
+                        if ((r = inf_flush(s))) return r;
+                    } else if (s->op == s->oe)
+                        return SLZ_E_LIMIT;
+                }
                 if (s->bn) {
                     s->ob[s->op++] = (uint8_t)s->bb;
                     s->bb >>= 8;
@@ -564,7 +595,7 @@ int inf_run(inf *s) {
                     continue;
                 }
                 s->bb = 0; /* bit buffer empty: drop prefetched copies of bytes we now copy directly */
-                k = MIN((size_t)len, MIN((size_t)(s->e - s->p), OBUF - s->op));
+                k = MIN((size_t)len, MIN((size_t)(s->e - s->p), s->oe - s->op));
                 memcpy(s->ob + s->op, s->p, k);
                 s->p += k;
                 s->op += k;
@@ -590,13 +621,45 @@ int inf_run(inf *s) {
         } else
             return SLZ_E_CORRUPT;
 #ifdef INF_BMI2
-        r = s->bmi2 ? codes_bmi2(s) : codes_generic(s);
+        if (s->direct)
+            r = s->bmi2 ? codes_direct_bmi2(s) : codes_direct(s);
+        else
+            r = s->bmi2 ? codes_bmi2(s) : codes_generic(s);
 #else
-        r = codes_generic(s);
+        r = s->direct ? codes_direct(s) : codes_generic(s);
 #endif
         if (r) return r;
     }
     if ((r = bits(s, s->bn & 7, &v))) return r;   /* byte-align end of stream */
     if (s->pad > s->bn / 8) return SLZ_E_CORRUPT; /* consumed bits past real input */
-    return inf_flush(s);
+    return s->direct ? 0 : inf_flush(s);
+}
+
+int slz_inflate(const void *in, size_t in_len, void *out, size_t out_cap, size_t *in_used, size_t *out_len) {
+    static const uint8_t none[1];
+    inf *s = (inf *)malloc(sizeof *s); /* decode tables only: no buffers */
+    int r;
+    if (in_used) *in_used = 0;
+    if (out_len) *out_len = 0;
+    if (!s) return SLZ_E_NOMEM;
+    /* the input is never written: eof is set from the start, so more_input() never moves it */
+    s->ib = (uint8_t *)(uintptr_t)(in ? in : none);
+    s->ob = out ? (uint8_t *)out : (uint8_t *)(uintptr_t)none; /* out_cap 0: never written */
+    s->oe = out ? out_cap : 0;
+    s->direct = 1;
+    s->bmi2 = has_bmi2();
+    inf_reset(s, 0, 0, NULL, 0, 0);
+    s->e = s->ib + (in ? in_len : 0);
+    s->eof = 1;
+    s->rd = NULL;
+    s->wr = NULL;
+    s->ck = NULL;
+    s->ru = s->wu = NULL;
+    r = inf_run(s);
+    if (!r) {
+        if (in_used) *in_used = (size_t)(inf_bitpos(s) / 8);
+        if (out_len) *out_len = s->op;
+    }
+    free(s);
+    return r;
 }
