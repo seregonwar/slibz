@@ -9,41 +9,41 @@
   "bytes": 211938580,
   "corpus": "Silesia",
   "deflate": {
-   "libdeflate": 1103.0,
-   "slz": 969.0,
-   "zlib": 462.0,
-   "zlib-ng": 796.0
+   "libdeflate": 927.0,
+   "slz": 811.0,
+   "zlib": 398.0,
+   "zlib-ng": 702.0
   },
   "files": 12,
   "lzma2": {
-   "slz": 151.0,
-   "xz": 155.0
+   "slz": 125.0,
+   "xz": 130.0
   },
   "rounds": {
    "deflate": [
     {
-     "libdeflate": 1102.0,
-     "slz": 966.0,
-     "zlib": 462.0,
-     "zlib-ng": 796.0
+     "libdeflate": 927.0,
+     "slz": 808.0,
+     "zlib": 398.0,
+     "zlib-ng": 702.0
     },
     {
-     "libdeflate": 1102.0,
-     "slz": 969.0,
-     "zlib": 461.0,
-     "zlib-ng": 796.0
+     "libdeflate": 927.0,
+     "slz": 811.0,
+     "zlib": 398.0,
+     "zlib-ng": 702.0
     },
     {
-     "libdeflate": 1103.0,
-     "slz": 968.0,
-     "zlib": 461.0,
-     "zlib-ng": 796.0
+     "libdeflate": 927.0,
+     "slz": 804.0,
+     "zlib": 398.0,
+     "zlib-ng": 701.0
     }
    ],
    "lzma2": [
     {
-     "slz": 151.0,
-     "xz": 155.0
+     "slz": 125.0,
+     "xz": 130.0
     }
    ]
   }
@@ -51,83 +51,83 @@
  "e2e": {
   "7z": {
    "silesia-nonsolid.7z": {
-    "7z l": 0.002321,
-    "7z x": 1.558735,
-    "bsdtar -x": 1.560698,
-    "slz list": 0.001154,
-    "slz x": 0.672105,
-    "slz x -j 1": 1.573495
+    "7z l": 0.002758,
+    "7z x": 1.7918,
+    "bsdtar -x": 1.834809,
+    "slz list": 0.001376,
+    "slz x": 0.824561,
+    "slz x -j 1": 1.877926
    },
    "silesia.7z": {
-    "7z l": 0.002304,
-    "7z x": 1.043476,
-    "bsdtar -x": 1.516944,
-    "slz list": 0.001178,
-    "slz x": 1.019599,
-    "slz x -j 1": 1.504442
+    "7z l": 0.002725,
+    "7z x": 1.20569,
+    "bsdtar -x": 1.817267,
+    "slz list": 0.001368,
+    "slz x": 1.218048,
+    "slz x -j 1": 1.786759
    }
   },
   "list": {
    "500k entries": {
-    "7z l": 4.067146,
-    "bsdtar -t": 2.800023,
-    "python zipfile": 1.944732,
-    "slz": 0.096613,
-    "unzip -Z1": 0.79121
+    "7z l": 4.66222,
+    "bsdtar -t": 3.099929,
+    "python zipfile": 2.273091,
+    "slz": 0.117332,
+    "unzip -Z1": 0.664468
    },
    "silesia.zip": {
-    "7z l": 0.002328,
-    "bsdtar -t": 0.001522,
-    "python zipfile": 0.024325,
-    "slz": 0.001164,
-    "unzip -Z1": 0.001683
+    "7z l": 0.002763,
+    "bsdtar -t": 0.001784,
+    "python zipfile": 0.030155,
+    "slz": 0.001354,
+    "unzip -Z1": 0.001951
    }
   },
   "runs": 3,
   "targz": {
    "silesia.tar.gz": {
-    "GNU tar -xzf": 1.08541,
-    "bsdtar": 0.379771,
-    "pigz -d | tar -x": 0.423579,
-    "slz": 0.268566
+    "GNU tar -xzf": 1.243278,
+    "bsdtar": 0.434552,
+    "pigz -d | tar -x": 0.580427,
+    "slz": 0.322077
    }
   },
   "threads": 4,
   "zip": {
    "silesia.zip": {
-    "7z x": 0.815998,
-    "bsdtar": 0.343421,
-    "python zipfile": 0.684688,
-    "slz": 0.095881,
-    "slz -j 1": 0.261419,
-    "unzip": 1.14903
+    "7z x": 0.975376,
+    "bsdtar": 0.404144,
+    "python zipfile": 0.815466,
+    "slz": 0.115991,
+    "slz -j 1": 0.316128,
+    "unzip": 1.325117
    }
   }
  },
  "env": {
   "cc": "gcc 13.3.0",
-  "cpu": "AMD EPYC 9V74 80-Core Processor",
+  "cpu": "AMD EPYC 7763 64-Core Processor",
   "image": "ubuntu24 20261111.370.1",
   "kernel": "7.0.0-1017-azure",
   "os": "Ubuntu 24.04.5 LTS",
   "runner": "GitHub Actions",
   "threads": 4
  },
- "event": "push",
- "measured_at": "2026-11-13T21:14:29Z",
+ "event": "workflow_dispatch",
+ "measured_at": "2026-11-13T21:20:25Z",
  "ref": "refs/heads/main",
  "repository": "seregonwar/slibz",
  "run_attempt": "1",
- "run_id": "43508378314",
- "run_url": "https://github.com/seregonwar/slibz/actions/runs/43508378314",
+ "run_id": "43509191625",
+ "run_url": "https://github.com/seregonwar/slibz/actions/runs/43509191625",
  "schema": 1,
  "subject": "bench: compare only with the nearest ancestor's run on the same setup",
  "timing": {
-  "build": 4.2,
-  "deflate": 38.7,
-  "e2e": 78.3,
-  "lzma2": 77.3,
-  "total": 199.6
+  "build": 4.4,
+  "deflate": 44.3,
+  "e2e": 90.6,
+  "lzma2": 87.3,
+  "total": 228.0
  },
  "versions": {
   "7-Zip": "7-Zip (z) 26.06 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-11-06",
