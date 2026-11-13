@@ -27,7 +27,7 @@ if [ "$arch" = x86_64 ] && [ "$job" = gcc ]; then
     r bench clang -O3
     r bench gcc -O3 -march=x86-64
     if grep -qm1 GenuineIntel /proc/cpuinfo; then # the gcc gap is largest on Intel
-        PROF="g_d" r profile gcc -O3
+        PROF="zc_d g_d" r profile gcc -O3
     fi
     if [ "${2:-1}" = 1 ]; then
         CC=gcc FUZZ_V=g r fuzz "$ITERS" 1 2
