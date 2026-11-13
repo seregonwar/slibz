@@ -4,7 +4,7 @@
 <style>text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif;font-variant-numeric:tabular-nums}</style>
 <rect x="0.5" y="0.5" width="413.0" height="232.0" fill="#151b23" rx="6" stroke="#3d444d"/>
 <text x="12.5" y="22.5" font-size="13" fill="#f0f6fc" font-weight="600">DEFLATE decode, MB/s</text>
-<text x="12.5" y="38.5" font-size="11" fill="#9198a1">last 5 runs on main · higher is better</text>
+<text x="12.5" y="38.5" font-size="11" fill="#9198a1">last 6 runs on main · higher is better</text>
 <line x1="44.5" y1="202.5" x2="302.5" y2="202.5" stroke="#3d444d" stroke-width="1"/>
 <text x="38.5" y="206.5" font-size="10" fill="#9198a1" text-anchor="end">0</text>
 <line x1="44.5" y1="166.0" x2="302.5" y2="166.0" stroke="#3d444d" stroke-width="1"/>
@@ -15,33 +15,38 @@
 <text x="38.5" y="97.0" font-size="10" fill="#9198a1" text-anchor="end">1200</text>
 <line x1="44.5" y1="56.5" x2="302.5" y2="56.5" stroke="#3d444d" stroke-width="1"/>
 <text x="38.5" y="60.5" font-size="10" fill="#9198a1" text-anchor="end">1600</text>
-<line x1="76.8" y1="52.5" x2="76.8" y2="202.5" stroke="#9198a1" stroke-width="1" stroke-dasharray="3 3"/>
-<line x1="141.2" y1="52.5" x2="141.2" y2="202.5" stroke="#9198a1" stroke-width="1" stroke-dasharray="3 3"/>
-<line x1="205.8" y1="52.5" x2="205.8" y2="202.5" stroke="#9198a1" stroke-width="1" stroke-dasharray="3 3"/>
-<line x1="270.2" y1="52.5" x2="270.2" y2="202.5" stroke="#9198a1" stroke-width="1" stroke-dasharray="3 3"/>
-<polyline points="44.5,101.9 109.0,117.9 173.5,88.3 238.0,102.1 302.5,96.2" fill="none" stroke="#656c76" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/>
+<line x1="70.3" y1="52.5" x2="70.3" y2="202.5" stroke="#9198a1" stroke-width="1" stroke-dasharray="3 3"/>
+<line x1="121.9" y1="52.5" x2="121.9" y2="202.5" stroke="#9198a1" stroke-width="1" stroke-dasharray="3 3"/>
+<line x1="173.5" y1="52.5" x2="173.5" y2="202.5" stroke="#9198a1" stroke-width="1" stroke-dasharray="3 3"/>
+<line x1="225.1" y1="52.5" x2="225.1" y2="202.5" stroke="#9198a1" stroke-width="1" stroke-dasharray="3 3"/>
+<line x1="276.7" y1="52.5" x2="276.7" y2="202.5" stroke="#9198a1" stroke-width="1" stroke-dasharray="3 3"/>
+<polyline points="44.5,101.9 96.1,117.9 147.7,88.3 199.3,102.1 250.9,119.0 302.5,96.2" fill="none" stroke="#656c76" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/>
 <circle cx="44.5" cy="101.9" r="2" fill="#656c76"><title>libdeflate 1103 MB/s at df9dd34</title></circle>
-<circle cx="109.0" cy="117.9" r="2" fill="#656c76"><title>libdeflate 927 MB/s at 7ddf69c</title></circle>
-<circle cx="173.5" cy="88.3" r="2" fill="#656c76"><title>libdeflate 1252 MB/s at a37bdda</title></circle>
-<circle cx="238.0" cy="102.1" r="2" fill="#656c76"><title>libdeflate 1100 MB/s at 2203d38</title></circle>
+<circle cx="96.1" cy="117.9" r="2" fill="#656c76"><title>libdeflate 927 MB/s at 7ddf69c</title></circle>
+<circle cx="147.7" cy="88.3" r="2" fill="#656c76"><title>libdeflate 1252 MB/s at a37bdda</title></circle>
+<circle cx="199.3" cy="102.1" r="2" fill="#656c76"><title>libdeflate 1100 MB/s at 2203d38</title></circle>
+<circle cx="250.9" cy="119.0" r="2" fill="#656c76"><title>libdeflate 915 MB/s at 4d6057c</title></circle>
 <circle cx="302.5" cy="96.2" r="2" fill="#656c76"><title>libdeflate 1165 MB/s at 0464858</title></circle>
-<polyline points="44.5,129.9 109.0,138.4 173.5,113.5 238.0,130.0 302.5,119.6" fill="none" stroke="#656c76" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="44.5,129.9 96.1,138.4 147.7,113.5 199.3,130.0 250.9,138.7 302.5,119.6" fill="none" stroke="#656c76" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/>
 <circle cx="44.5" cy="129.9" r="2" fill="#656c76"><title>zlib-ng 796 MB/s at df9dd34</title></circle>
-<circle cx="109.0" cy="138.4" r="2" fill="#656c76"><title>zlib-ng 703 MB/s at 7ddf69c</title></circle>
-<circle cx="173.5" cy="113.5" r="2" fill="#656c76"><title>zlib-ng 975 MB/s at a37bdda</title></circle>
-<circle cx="238.0" cy="130.0" r="2" fill="#656c76"><title>zlib-ng 795 MB/s at 2203d38</title></circle>
+<circle cx="96.1" cy="138.4" r="2" fill="#656c76"><title>zlib-ng 703 MB/s at 7ddf69c</title></circle>
+<circle cx="147.7" cy="113.5" r="2" fill="#656c76"><title>zlib-ng 975 MB/s at a37bdda</title></circle>
+<circle cx="199.3" cy="130.0" r="2" fill="#656c76"><title>zlib-ng 795 MB/s at 2203d38</title></circle>
+<circle cx="250.9" cy="138.7" r="2" fill="#656c76"><title>zlib-ng 699 MB/s at 4d6057c</title></circle>
 <circle cx="302.5" cy="119.6" r="2" fill="#656c76"><title>zlib-ng 908 MB/s at 0464858</title></circle>
-<polyline points="44.5,160.3 109.0,166.1 173.5,154.9 238.0,160.3 302.5,156.9" fill="none" stroke="#656c76" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="44.5,160.3 96.1,166.1 147.7,154.9 199.3,160.3 250.9,166.5 302.5,156.9" fill="none" stroke="#656c76" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/>
 <circle cx="44.5" cy="160.3" r="2" fill="#656c76"><title>zlib 462 MB/s at df9dd34</title></circle>
-<circle cx="109.0" cy="166.1" r="2" fill="#656c76"><title>zlib 399 MB/s at 7ddf69c</title></circle>
-<circle cx="173.5" cy="154.9" r="2" fill="#656c76"><title>zlib 522 MB/s at a37bdda</title></circle>
-<circle cx="238.0" cy="160.3" r="2" fill="#656c76"><title>zlib 463 MB/s at 2203d38</title></circle>
+<circle cx="96.1" cy="166.1" r="2" fill="#656c76"><title>zlib 399 MB/s at 7ddf69c</title></circle>
+<circle cx="147.7" cy="154.9" r="2" fill="#656c76"><title>zlib 522 MB/s at a37bdda</title></circle>
+<circle cx="199.3" cy="160.3" r="2" fill="#656c76"><title>zlib 463 MB/s at 2203d38</title></circle>
+<circle cx="250.9" cy="166.5" r="2" fill="#656c76"><title>zlib 395 MB/s at 4d6057c</title></circle>
 <circle cx="302.5" cy="156.9" r="2" fill="#656c76"><title>zlib 500 MB/s at 0464858</title></circle>
-<polyline points="44.5,142.5 109.0,150.8 173.5,129.0 238.0,113.7 302.5,107.6" fill="none" stroke="#4493f8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="44.5,142.5 96.1,150.8 147.7,129.0 199.3,113.7 250.9,132.4 302.5,107.6" fill="none" stroke="#4493f8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
 <circle cx="44.5" cy="142.5" r="2.5" fill="#4493f8"><title>slz 657 MB/s at df9dd34</title></circle>
-<circle cx="109.0" cy="150.8" r="2.5" fill="#4493f8"><title>slz 567 MB/s at 7ddf69c</title></circle>
-<circle cx="173.5" cy="129.0" r="2.5" fill="#4493f8"><title>slz 805 MB/s at a37bdda</title></circle>
-<circle cx="238.0" cy="113.7" r="2.5" fill="#4493f8"><title>slz 973 MB/s at 2203d38</title></circle>
+<circle cx="96.1" cy="150.8" r="2.5" fill="#4493f8"><title>slz 567 MB/s at 7ddf69c</title></circle>
+<circle cx="147.7" cy="129.0" r="2.5" fill="#4493f8"><title>slz 805 MB/s at a37bdda</title></circle>
+<circle cx="199.3" cy="113.7" r="2.5" fill="#4493f8"><title>slz 973 MB/s at 2203d38</title></circle>
+<circle cx="250.9" cy="132.4" r="2.5" fill="#4493f8"><title>slz 768 MB/s at 4d6057c</title></circle>
 <circle cx="302.5" cy="107.6" r="2.5" fill="#4493f8"><title>slz 1040 MB/s at 0464858</title></circle>
 <text x="310.5" y="100.2" font-size="11" fill="#9198a1">libdeflate 1165</text>
 <text x="310.5" y="113.2" font-size="11" fill="#f0f6fc" font-weight="600">slz 1040</text>
@@ -51,7 +56,7 @@
 <text x="302.5" y="218.5" font-size="10" fill="#9198a1" text-anchor="end">0464858 · 2026-11-13</text>
 <rect x="426.5" y="0.5" width="413.0" height="232.0" fill="#151b23" rx="6" stroke="#3d444d"/>
 <text x="438.5" y="22.5" font-size="13" fill="#f0f6fc" font-weight="600">LZMA2 decode, MB/s</text>
-<text x="438.5" y="38.5" font-size="11" fill="#9198a1">last 5 runs on main · higher is better</text>
+<text x="438.5" y="38.5" font-size="11" fill="#9198a1">last 6 runs on main · higher is better</text>
 <line x1="470.5" y1="202.5" x2="728.5" y2="202.5" stroke="#3d444d" stroke-width="1"/>
 <text x="464.5" y="206.5" font-size="10" fill="#9198a1" text-anchor="end">0</text>
 <line x1="470.5" y1="166.0" x2="728.5" y2="166.0" stroke="#3d444d" stroke-width="1"/>
@@ -62,21 +67,24 @@
 <text x="464.5" y="97.0" font-size="10" fill="#9198a1" text-anchor="end">150</text>
 <line x1="470.5" y1="56.5" x2="728.5" y2="56.5" stroke="#3d444d" stroke-width="1"/>
 <text x="464.5" y="60.5" font-size="10" fill="#9198a1" text-anchor="end">200</text>
-<line x1="502.8" y1="52.5" x2="502.8" y2="202.5" stroke="#9198a1" stroke-width="1" stroke-dasharray="3 3"/>
-<line x1="567.2" y1="52.5" x2="567.2" y2="202.5" stroke="#9198a1" stroke-width="1" stroke-dasharray="3 3"/>
-<line x1="631.8" y1="52.5" x2="631.8" y2="202.5" stroke="#9198a1" stroke-width="1" stroke-dasharray="3 3"/>
-<line x1="696.2" y1="52.5" x2="696.2" y2="202.5" stroke="#9198a1" stroke-width="1" stroke-dasharray="3 3"/>
-<polyline points="470.5,91.5 535.0,109.1 599.5,66.7 664.0,90.8 728.5,87.2" fill="none" stroke="#656c76" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/>
+<line x1="496.3" y1="52.5" x2="496.3" y2="202.5" stroke="#9198a1" stroke-width="1" stroke-dasharray="3 3"/>
+<line x1="547.9" y1="52.5" x2="547.9" y2="202.5" stroke="#9198a1" stroke-width="1" stroke-dasharray="3 3"/>
+<line x1="599.5" y1="52.5" x2="599.5" y2="202.5" stroke="#9198a1" stroke-width="1" stroke-dasharray="3 3"/>
+<line x1="651.1" y1="52.5" x2="651.1" y2="202.5" stroke="#9198a1" stroke-width="1" stroke-dasharray="3 3"/>
+<line x1="702.7" y1="52.5" x2="702.7" y2="202.5" stroke="#9198a1" stroke-width="1" stroke-dasharray="3 3"/>
+<polyline points="470.5,91.5 522.1,109.1 573.7,66.7 625.3,90.8 676.9,116.4 728.5,87.2" fill="none" stroke="#656c76" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/>
 <circle cx="470.5" cy="91.5" r="2" fill="#656c76"><title>xz 152 MB/s at df9dd34</title></circle>
-<circle cx="535.0" cy="109.1" r="2" fill="#656c76"><title>xz 128 MB/s at 7ddf69c</title></circle>
-<circle cx="599.5" cy="66.7" r="2" fill="#656c76"><title>xz 186 MB/s at a37bdda</title></circle>
-<circle cx="664.0" cy="90.8" r="2" fill="#656c76"><title>xz 153 MB/s at 2203d38</title></circle>
+<circle cx="522.1" cy="109.1" r="2" fill="#656c76"><title>xz 128 MB/s at 7ddf69c</title></circle>
+<circle cx="573.7" cy="66.7" r="2" fill="#656c76"><title>xz 186 MB/s at a37bdda</title></circle>
+<circle cx="625.3" cy="90.8" r="2" fill="#656c76"><title>xz 153 MB/s at 2203d38</title></circle>
+<circle cx="676.9" cy="116.4" r="2" fill="#656c76"><title>xz 118 MB/s at 4d6057c</title></circle>
 <circle cx="728.5" cy="87.2" r="2" fill="#656c76"><title>xz 158 MB/s at 0464858</title></circle>
-<polyline points="470.5,137.5 535.0,145.6 599.5,125.8 664.0,137.5 728.5,109.1" fill="none" stroke="#4493f8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="470.5,137.5 522.1,145.6 573.7,125.8 625.3,137.5 676.9,139.0 728.5,109.1" fill="none" stroke="#4493f8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
 <circle cx="470.5" cy="137.5" r="2.5" fill="#4493f8"><title>slz 89 MB/s at df9dd34</title></circle>
-<circle cx="535.0" cy="145.6" r="2.5" fill="#4493f8"><title>slz 78 MB/s at 7ddf69c</title></circle>
-<circle cx="599.5" cy="125.8" r="2.5" fill="#4493f8"><title>slz 105 MB/s at a37bdda</title></circle>
-<circle cx="664.0" cy="137.5" r="2.5" fill="#4493f8"><title>slz 89 MB/s at 2203d38</title></circle>
+<circle cx="522.1" cy="145.6" r="2.5" fill="#4493f8"><title>slz 78 MB/s at 7ddf69c</title></circle>
+<circle cx="573.7" cy="125.8" r="2.5" fill="#4493f8"><title>slz 105 MB/s at a37bdda</title></circle>
+<circle cx="625.3" cy="137.5" r="2.5" fill="#4493f8"><title>slz 89 MB/s at 2203d38</title></circle>
+<circle cx="676.9" cy="139.0" r="2.5" fill="#4493f8"><title>slz 87 MB/s at 4d6057c</title></circle>
 <circle cx="728.5" cy="109.1" r="2.5" fill="#4493f8"><title>slz 128 MB/s at 0464858</title></circle>
 <text x="736.5" y="91.2" font-size="11" fill="#9198a1">xz 158</text>
 <text x="736.5" y="113.1" font-size="11" fill="#f0f6fc" font-weight="600">slz 128</text>
