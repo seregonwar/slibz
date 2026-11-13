@@ -1,6 +1,6 @@
 {
- "commit": "2203d38ce1b76889583d88f465c81754ad992bd0",
- "commit_time": "2026-11-13T12:45:45Z",
+ "commit": "0464858b09d82798e6bb976d38ff2def22d3a73f",
+ "commit_time": "2026-11-13T15:40:57Z",
  "decode": {
   "best_of": {
    "deflate": "5 per process, 3 processes",
@@ -9,41 +9,41 @@
   "bytes": 211938580,
   "corpus": "Silesia",
   "deflate": {
-   "libdeflate": 1100.0,
-   "slz": 973.0,
-   "zlib": 463.0,
-   "zlib-ng": 795.0
+   "libdeflate": 1165.0,
+   "slz": 1040.0,
+   "zlib": 500.0,
+   "zlib-ng": 908.0
   },
   "files": 12,
   "lzma2": {
-   "slz": 89.0,
-   "xz": 153.0
+   "slz": 128.0,
+   "xz": 158.0
   },
   "rounds": {
    "deflate": [
     {
-     "libdeflate": 1099.0,
-     "slz": 968.0,
-     "zlib": 463.0,
-     "zlib-ng": 795.0
+     "libdeflate": 1165.0,
+     "slz": 1040.0,
+     "zlib": 500.0,
+     "zlib-ng": 908.0
     },
     {
-     "libdeflate": 1099.0,
-     "slz": 960.0,
-     "zlib": 463.0,
-     "zlib-ng": 795.0
+     "libdeflate": 1160.0,
+     "slz": 1030.0,
+     "zlib": 498.0,
+     "zlib-ng": 904.0
     },
     {
-     "libdeflate": 1100.0,
-     "slz": 973.0,
-     "zlib": 463.0,
-     "zlib-ng": 793.0
+     "libdeflate": 1158.0,
+     "slz": 1032.0,
+     "zlib": 498.0,
+     "zlib-ng": 904.0
     }
    ],
    "lzma2": [
     {
-     "slz": 89.0,
-     "xz": 153.0
+     "slz": 128.0,
+     "xz": 158.0
     }
    ]
   }
@@ -51,62 +51,62 @@
  "e2e": {
   "7z": {
    "silesia-nonsolid.7z": {
-    "7z l": 0.002305,
-    "7z x": 1.592391,
-    "bsdtar -x": 1.598473,
-    "slz list": 0.001156,
-    "slz x": 0.893274,
-    "slz x -j 1": 2.5174
+    "7z l": 0.00259,
+    "7z x": 1.561835,
+    "bsdtar -x": 1.646104,
+    "slz list": 0.001194,
+    "slz x": 0.789794,
+    "slz x -j 1": 1.905541
    },
    "silesia.7z": {
-    "7z l": 0.002344,
-    "7z x": 1.057185,
-    "bsdtar -x": 1.537073,
-    "slz list": 0.001157,
-    "slz x": 2.464248,
-    "slz x -j 1": 2.463967
+    "7z l": 0.002648,
+    "7z x": 1.027877,
+    "bsdtar -x": 1.638025,
+    "slz list": 0.001164,
+    "slz x": 1.802398,
+    "slz x -j 1": 1.814001
    }
   },
   "list": {
    "500k entries": {
-    "7z l": 4.062116,
-    "bsdtar -t": 2.80514,
-    "python zipfile": 1.989906,
-    "slz": 0.09561,
-    "unzip -Z1": 0.817135
+    "7z l": 3.694904,
+    "bsdtar -t": 2.415441,
+    "python zipfile": 1.793422,
+    "slz": 0.07398,
+    "unzip -Z1": 0.469541
    },
    "silesia.zip": {
-    "7z l": 0.002303,
-    "bsdtar -t": 0.001525,
-    "python zipfile": 0.02466,
-    "slz": 0.001124,
-    "unzip -Z1": 0.001673
+    "7z l": 0.002418,
+    "bsdtar -t": 0.001449,
+    "python zipfile": 0.02361,
+    "slz": 0.001039,
+    "unzip -Z1": 0.001548
    }
   },
   "runs": 3,
   "targz": {
    "silesia.tar.gz": {
-    "GNU tar -xzf": 1.06947,
-    "bsdtar": 0.379659,
-    "pigz -d | tar -x": 0.418828,
-    "slz": 0.267056
+    "GNU tar -xzf": 0.974741,
+    "bsdtar": 0.349945,
+    "pigz -d | tar -x": 0.368253,
+    "slz": 0.265774
    }
   },
   "threads": 4,
   "zip": {
    "silesia.zip": {
-    "7z x": 0.817826,
-    "bsdtar": 0.344778,
-    "python zipfile": 0.694338,
-    "slz": 0.855896,
-    "slz -j 1": 0.919926,
-    "unzip": 1.153287
+    "7z x": 0.742481,
+    "bsdtar": 0.309788,
+    "python zipfile": 0.619741,
+    "slz": 0.831891,
+    "slz -j 1": 0.788136,
+    "unzip": 1.096661
    }
   }
  },
  "env": {
   "cc": "gcc 13.3.0",
-  "cpu": "AMD EPYC 9V74 80-Core Processor",
+  "cpu": "AMD EPYC 9V45 96-Core Processor",
   "image": "ubuntu24 20261101.360.1",
   "kernel": "7.0.0-1017-azure",
   "os": "Ubuntu 24.04.5 LTS",
@@ -114,20 +114,20 @@
   "threads": 4
  },
  "event": "push",
- "measured_at": "2026-11-13T12:49:48Z",
+ "measured_at": "2026-11-13T15:44:44Z",
  "ref": "refs/heads/main",
  "repository": "seregonwar/slibz",
  "run_attempt": "1",
- "run_id": "43427918493",
- "run_url": "https://github.com/seregonwar/slibz/actions/runs/43427918493",
+ "run_id": "43455055038",
+ "run_url": "https://github.com/seregonwar/slibz/actions/runs/43455055038",
  "schema": 1,
- "subject": "inflate: keep the distance table base in a register on arm64",
+ "subject": "inflate: x86-64 gcc codegen: bzhi extra bits, 64-bit match lengths, indexed long copy",
  "timing": {
-  "build": 4.9,
-  "deflate": 38.7,
-  "e2e": 94.9,
-  "lzma2": 88.3,
-  "total": 228.0
+  "build": 10.1,
+  "deflate": 33.4,
+  "e2e": 83.5,
+  "lzma2": 87.5,
+  "total": 215.5
  },
  "versions": {
   "7-Zip": "7-Zip (z) 26.06 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-11-06",
