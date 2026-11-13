@@ -6,7 +6,8 @@
 #   bench/run.sh deps <cc>                  pinned libdeflate, zlib-ng (native API), zlib into deps/<cc>
 #   bench/run.sh variants                   bench/variants.txt -> v/<name>/{src,include}, order in v/order
 #   bench/run.sh bench <cc> <flags...>      build every variant + bench/abbench.c, run it on Silesia
-#   bench/run.sh harness <cc>               tests/bench_inflate.c as is, on the last variant
+#   bench/run.sh profile <cc> <flags...>    perf profile of the first variant and libdeflate (after bench)
+#   bench/run.sh harness <cc> [variant]     tests/bench_inflate.c as is, on a variant (default: first)
 #   bench/run.sh fuzz <iters> <seeds...>    tests/fuzz_inflate.c (ASan + UBSan) per variant, same counters
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -94,27 +95,35 @@ variants() {
     done < bench/variants.txt
 }
 
+vh() { # variants.h for the given variant names
+    local n
+    echo '#include <stddef.h>'
+    echo '#include <stdint.h>'
+    echo 'typedef int64_t (*rd_fn)(void *u, uint8_t *b, size_t n);'
+    echo 'typedef int (*wr_fn)(void *u, const uint8_t *p, size_t n);'
+    for n in "$@"; do echo "void *v_${n}_new(void); int v_${n}_decode(void *, rd_fn, wr_fn, void *);"; done
+    echo "#define NV $#"
+    echo "static const char *const vname[NV] = {$(for n in "$@"; do printf '"%s", ' "$n"; done)};"
+    echo "static void *(*const vnew[NV])(void) = {$(for n in "$@"; do printf 'v_%s_new, ' "$n"; done)};"
+    echo "static int (*const vdec[NV])(void *, rd_fn, wr_fn, void *) = {$(for n in "$@"; do
+        printf 'v_%s_decode, ' "$n"
+    done)};"
+}
+
+objdir() { # cc flags... -> obj/<tag>
+    echo "obj/$(echo "$*" | tr -s ' ' '_' | tr -c 'A-Za-z0-9_\n' '_')"
+}
+
 bench() {
     local cc=$1
     shift
     local flags="$*" tag o pre=$PWD/deps/$cc n p bad names
     names=$(cat v/order)
     tag=$(echo "$cc $flags" | tr -s ' ' '_')
-    o=obj/$(echo "$tag" | tr -c 'A-Za-z0-9_\n' '_')
+    o=$(objdir "$cc" "$flags")
     rm -rf "$o" && mkdir -p "$o"
-    {
-        echo '#include <stddef.h>'
-        echo '#include <stdint.h>'
-        echo 'typedef int64_t (*rd_fn)(void *u, uint8_t *b, size_t n);'
-        echo 'typedef int (*wr_fn)(void *u, const uint8_t *p, size_t n);'
-        for n in $names; do echo "void *v_${n}_new(void); int v_${n}_decode(void *, rd_fn, wr_fn, void *);"; done
-        echo "#define NV $(echo $names | wc -w)"
-        echo "static const char *const vname[NV] = {$(for n in $names; do printf '"%s", ' "$n"; done)};"
-        echo "static void *(*const vnew[NV])(void) = {$(for n in $names; do printf 'v_%s_new, ' "$n"; done)};"
-        echo "static int (*const vdec[NV])(void *, rd_fn, wr_fn, void *) = {$(for n in $names; do
-            printf 'v_%s_decode, ' "$n"
-        done)};"
-    } > "$o/variants.h"
+    # shellcheck disable=SC2086
+    vh $names > "$o/variants.h"
     echo "== $cc $flags: $($cc --version | sed -n 1p)"
     for n in $names; do
         p=v_${n}_
@@ -140,7 +149,7 @@ bench() {
 
 harness() {
     local cc=$1 pre=$PWD/deps/$1 n o=obj/harness-$1 k
-    n=$(tail -1 v/order)
+    n=${2:-$(sed -n 1p v/order)}
     mkdir -p "$o"
     $cc -O2 -I"v/$n/include" -I"v/$n/src" -I"$pre/include" tests/bench_inflate.c "v/$n/src/inflate.c" \
         "$pre/lib/libdeflate.a" "$pre/lib/libz.a" -o "$o/bench_inflate"
@@ -148,6 +157,57 @@ harness() {
     for k in 1 2 3; do
         # shellcheck disable=SC2046
         taskset -c "$CPU" "$o/bench_inflate" $(for f in $FILES; do echo "silesia/$f"; done)
+    done
+}
+
+perfbin() { # path of a working perf, installing it if needed (GitHub runners: passwordless sudo)
+    local p
+    p=$(command -v perf || true)
+    if [ -z "$p" ] || ! "$p" --version > /dev/null 2>&1; then
+        sudo apt-get update -qq > /dev/null 2>&1 || true
+        sudo apt-get install -y -qq linux-tools-common "linux-tools-$(uname -r)" > /dev/null 2>&1 ||
+            sudo apt-get install -y -qq linux-tools-common linux-tools-generic > /dev/null 2>&1 || true
+        p=$(ls /usr/lib/linux-tools/*/perf /usr/lib/linux-tools-*/perf 2> /dev/null | sed -n 1p)
+    fi
+    [ -n "$p" ] && "$p" --version > /dev/null 2>&1 || return 1
+    sudo sysctl -q -w kernel.perf_event_paranoid=-1 > /dev/null 2>&1 || true
+    sudo sysctl -q -w kernel.kptr_restrict=0 > /dev/null 2>&1 || true
+    echo "$p"
+}
+
+profile() { # cpu-clock sampling of the first variant and of libdeflate, objects from bench <cc> <flags>
+    local cc=$1
+    shift
+    local flags="$*" o pre=$PWD/deps/$cc first perf m sym files
+    o=$(objdir "$cc" "$flags")
+    first=$(sed -n 1p v/order)
+    files=$(for f in $FILES; do echo "silesia/$f"; done)
+    [ -f "$o/$first.o" ] || { echo "profile: run bench $cc $flags first"; return 1; }
+    perf=$(perfbin) || { echo "profile: perf unavailable, skipped"; return 0; }
+    echo "perf: $("$perf" --version)"
+    mkdir -p "$o/prof"
+    vh "$first" > "$o/prof/variants.h" # one slz variant: its static functions have unique names
+    # shellcheck disable=SC2086
+    $cc $flags -I"$o/prof" -I"$pre/include" bench/abbench.c "$o/$first.o" "$o/zng.o" "$pre/lib/libdeflate.a" \
+        "$pre/lib/libz-ng.a" "$pre/lib/libz.a" -o "$o/prof/abbench"
+    for m in "$first" libdeflate; do
+        echo "== perf $cc $flags: $m"
+        # shellcheck disable=SC2086
+        "$perf" stat -e task-clock,cycles,instructions,branches,branch-misses -- taskset -c "$CPU" \
+            "$o/prof/abbench" -r 3 -m "$m" $files 2>&1 | grep -E 'TOTAL|task-clock|cycles|instructions|branch' || true
+        # shellcheck disable=SC2086
+        "$perf" record -q -e cpu-clock -F 10000 -o "$o/prof/$m.data" -- taskset -c "$CPU" "$o/prof/abbench" -r 3 \
+            -m "$m" $files > /dev/null 2>&1 || { echo "perf record failed"; continue; }
+        "$perf" report -i "$o/prof/$m.data" --stdio -q --sort sym --percent-limit 0.3 2> /dev/null | sed -n '1,20p' || true
+    done
+    for m in "$first" libdeflate; do
+        [ -f "$o/prof/$m.data" ] || continue
+        sym=$("$perf" report -i "$o/prof/$m.data" --stdio -q --sort sym 2> /dev/null |
+            awk '$2 == "[.]" && $3 ~ /^(codes|deflate_decompress)/ { print $3; exit }' || true)
+        [ -n "$sym" ] || continue
+        echo "== perf annotate $cc $flags: $m $sym (instructions >= 0.1% of samples)"
+        "$perf" annotate -i "$o/prof/$m.data" --stdio --no-source "$sym" 2> /dev/null |
+            awk '$1 + 0 >= 0.1' | sed -n '1,220p' || true
     done
 }
 
@@ -197,9 +257,9 @@ fuzz() {
 cmd=${1:-}
 [ $# -gt 0 ] && shift
 case "$cmd" in
-    info | corpus | deps | variants | bench | harness | fuzz) "$cmd" "$@" ;;
+    info | corpus | deps | variants | bench | profile | harness | fuzz) "$cmd" "$@" ;;
     *)
-        sed -n '2,10p' "$0"
+        sed -n '2,11p' "$0"
         exit 2
         ;;
 esac
