@@ -144,6 +144,9 @@ typedef struct inf inf;
 typedef int (*ck_fn)(void *u, inf *s); /* called at every block boundary; non-zero stops */
 
 struct inf {
+    /* decode tables first: the hot loop indexes lt straight from the state pointer (arm64 has
+     * no base + scaled index + offset load) */
+    uint32_t lt[LT_SIZE], dt[DT_SIZE];
     uint64_t bb; /* bit buffer: bn valid bits; bits above bn mirror the next input bytes */
     unsigned bn;
     unsigned pad; /* zero bytes appended past the end of input (must not be consumed) */
@@ -160,7 +163,6 @@ struct inf {
     wr_fn wr;
     ck_fn ck;
     void *ru, *wu;     /* reader context; writer + checkpoint context */
-    uint32_t lt[LT_SIZE], dt[DT_SIZE];
 };
 
 inf *inf_new(void); /* one allocation: state + buffers; free() it */
