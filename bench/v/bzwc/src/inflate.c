@@ -11,6 +11,12 @@
  * Acceptance rules match zlib exactly (verified by tests/fuzz_inflate.c); every table, window
  * and buffer access is bounded by construction. */
 #include "internal.h"
+#if defined(__BMI2__) && defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
+#include <immintrin.h>
+#define INF_BZHI(v, n) _bzhi_u64((v), (n))
+#else
+#define INF_BZHI(v, n) ((v) & ((1ull << (uint8_t)(n)) - 1))
+#endif
 
 /* x86-64 GCC/Clang: the hot loop is also compiled for BMI2 (shrx/bzhi for the variable shifts
  * and masks) and picked at run time */
@@ -325,16 +331,16 @@ out:
 #define FAST_OUT (258 + 32 + 2)
 
 /* copy a match of len (3..258) bytes from distance d (1..op) ending inside the output margin */
-static inline void copy_match(uint8_t *o, size_t d, unsigned len) {
+static inline void copy_match(uint8_t *o, size_t d, size_t len) {
     const uint8_t *m = o - d;
     uint8_t *end = o + len;
     if (d >= 16) {
+        size_t i = 0;
         do {
-            memcpy(o, m, 16);
-            memcpy(o + 16, m + 16, 16);
-            o += 32;
-            m += 32;
-        } while (o < end); /* may overshoot <= 31 bytes */
+            memcpy(o + i, m + i, 16);
+            memcpy(o + i + 16, m + i + 16, 16);
+            i += 32;
+        } while (i < len); /* may overshoot <= 31 bytes */
     } else if (d >= 8) {
         do {
             memcpy(o, m, 8);
@@ -367,16 +373,14 @@ static inline void copy_match(uint8_t *o, size_t d, unsigned len) {
  * per instance): the output is the caller's buffer ob[0, oe), which is never flushed; the fast
  * loop runs while a whole iteration fits, the careful path checks every symbol against oe. */
 INF_INLINE int codes(inf *s, const int direct) {
-    uint8_t *const ob = s->ob;
+    uint8_t *ob = s->ob;
     uint64_t bb = s->bb, sv;
-    unsigned bn = s->bn, len;
+    unsigned bn = s->bn;
+    size_t len;
     const uint8_t *p = s->p, *pe = s->e;
-    uint8_t *o = ob + s->op;
-    size_t d;
+    size_t op = s->op, d;
     const size_t oe = direct ? s->oe : OBUF;
-    uint8_t *const oend = ob + oe;
-    /* the fast loop runs while o <= ol (direct: and oe >= FAST_OUT) */
-    uint8_t *const ol = oe >= FAST_OUT ? oend - FAST_OUT : ob;
+    const size_t ol = oe - FAST_OUT; /* the fast loop runs while op <= ol (direct: and oe >= FAST_OUT) */
     uint32_t e;
     int r;
 #if (defined(__GNUC__) || defined(__clang__)) && defined(__aarch64__)
@@ -390,14 +394,14 @@ INF_INLINE int codes(inf *s, const int direct) {
      * the pointer gcc runs out of registers and reloads it from the stack on every lookup */
 #define DT(i) s->dt[i]
 #endif
-#define SAVE()     (s->bb = bb, s->bn = bn, s->p = p, s->op = (size_t)(o - ob))
-#define LOAD()     (bb = s->bb, bn = s->bn, p = s->p, pe = s->e, o = ob + s->op)
+#define SAVE()     (s->bb = bb, s->bn = bn, s->p = p, s->op = op)
+#define LOAD()     (bb = s->bb, bn = s->bn, p = s->p, pe = s->e, op = s->op)
 #define CONSUME(x) (bb >>= (x) & 63, bn -= (x)) /* fast loop: only (u8)bn is valid */
 #define REFILL()   (bb |= ld64(p) << (bn & 63), p += 7 - (bn >> 3 & 7), bn |= 56)
 #define CONSUMEX(x) (bb >>= (x) & 63, bn -= (x) & 63)
-#define EXTRA(x)   ((unsigned)((sv & ((1ull << (uint8_t)(x)) - 1)) >> ((x) >> 8 & 63)))
+#define EXTRA(x)   ((size_t)(INF_BZHI(sv, x) >> ((x) >> 8 & 63)))
     for (;;) {
-        if (!direct && o > ol) {
+        if (!direct && op > ol) {
             SAVE();
             if ((r = inf_flush(s))) return r;
             LOAD();
@@ -407,7 +411,7 @@ INF_INLINE int codes(inf *s, const int direct) {
             if ((r = more_input(s, FAST_IN))) return r;
             LOAD();
         }
-        if (pe - p >= FAST_IN && (!direct || (oe >= FAST_OUT && o <= ol))) {
+        if (pe - p >= FAST_IN && (!direct || (oe >= FAST_OUT && op <= ol))) {
             /* Fast loop. Invariant at the top: (u8)bn >= 56 and e = primary entry for bb.
              * Upper bits of bn are garbage: whole entries are subtracted and only the low 8
              * bits count. Bit budget per refill: 2 literals (<= 22) + a length (<= 20, with
@@ -425,18 +429,18 @@ INF_INLINE int codes(inf *s, const int direct) {
                     e = s->lt[bb & LTM];
                     sv = bb;
                     CONSUME(e);
-                    *o++ = (uint8_t)lit;
+                    ob[op++] = (uint8_t)lit;
                     if (e & LIT) {
                         lit = e >> 16 & 255;
                         e = s->lt[bb & LTM];
                         sv = bb;
                         CONSUME(e);
-                        *o++ = (uint8_t)lit;
+                        ob[op++] = (uint8_t)lit;
                         if (e & LIT) { /* third literal: next lookup, refill, next iteration */
                             lit = e >> 16 & 255;
                             e = s->lt[bb & LTM];
                             REFILL();
-                            *o++ = (uint8_t)lit;
+                            ob[op++] = (uint8_t)lit;
                             continue;
                         }
                     }
@@ -454,7 +458,7 @@ INF_INLINE int codes(inf *s, const int direct) {
                     CONSUME(e);
                     if ((uint8_t)bn < 20 + 8) REFILL();
                     if (e & LIT) {
-                        *o++ = (uint8_t)(e >> 16);
+                        ob[op++] = (uint8_t)(e >> 16);
                         e = s->lt[bb & LTM];
                         REFILL();
                         continue;
@@ -466,7 +470,7 @@ INF_INLINE int codes(inf *s, const int direct) {
                         return 0;
                     }
                 }
-                len = (e >> 16) + EXTRA(e);
+                len = (size_t)(e >> 16) + EXTRA(e);
                 e = DT(bb & DTM);
                 if (UNLIKELY(e & EXC)) {
                     if ((uint8_t)bn < 28 + LT_BITS) REFILL();
@@ -479,13 +483,13 @@ INF_INLINE int codes(inf *s, const int direct) {
                 }
                 sv = bb;
                 CONSUME(e);
-                d = (e >> 16) + EXTRA(e);
-                if (UNLIKELY(d > (size_t)(o - ob))) return SLZ_E_CORRUPT;
+                d = (size_t)(e >> 16) + EXTRA(e);
+                if (UNLIKELY(d > op)) return SLZ_E_CORRUPT;
                 e = s->lt[bb & LTM];
                 REFILL();
-                copy_match(o, d, len);
-                o += len;
-            } while (p <= pf && o <= ol);
+                copy_match(ob + op, d, len);
+                op += len;
+            } while (p <= pf && op <= ol);
             bn &= 255;
             continue;
         }
@@ -504,15 +508,15 @@ INF_INLINE int codes(inf *s, const int direct) {
         sv = bb;
         CONSUMEX(e);
         if (e & LIT) {
-            if (direct && o == oend) return SLZ_E_LIMIT;
-            *o++ = (uint8_t)(e >> 16);
+            if (direct && op == oe) return SLZ_E_LIMIT;
+            ob[op++] = (uint8_t)(e >> 16);
             continue;
         }
         if (e & EXC) {
             if (e & EOB) break;
             return SLZ_E_CORRUPT;
         }
-        len = (e >> 16) + EXTRA(e);
+        len = (size_t)(e >> 16) + EXTRA(e);
         e = DT(bb & DTM);
         if (e & SUB) {
             CONSUMEX(e);
@@ -521,17 +525,18 @@ INF_INLINE int codes(inf *s, const int direct) {
         if (e & EXC) return SLZ_E_CORRUPT;
         sv = bb;
         CONSUMEX(e);
-        d = (e >> 16) + EXTRA(e);
-        if (d > (size_t)(o - ob)) return SLZ_E_CORRUPT;
-        if (direct && (size_t)(oend - o) < len + 31u) { /* no room for copy_match's overshoot: exact copy */
+        d = (size_t)(e >> 16) + EXTRA(e);
+        if (d > op) return SLZ_E_CORRUPT;
+        if (direct && oe - op < len + 31u) { /* no room for copy_match's overshoot: exact copy */
+            uint8_t *o = ob + op;
             const uint8_t *m = o - d;
-            unsigned k;
-            if (len > (size_t)(oend - o)) return SLZ_E_LIMIT;
+            size_t k;
+            if (len > oe - op) return SLZ_E_LIMIT;
             for (k = 0; k < len; k++)
                 o[k] = m[k];
         } else
-            copy_match(o, d, len);
-        o += len;
+            copy_match(ob + op, d, len);
+        op += len;
     }
     SAVE();
     return 0;
