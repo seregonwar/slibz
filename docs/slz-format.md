@@ -7,7 +7,8 @@ Copyright (c) 2026 Seregon. SPDX-License-Identifier: MIT.
 1. **Ratio close to a solid archive.** File contents are concatenated into one logical *stream*
    (small files packed together), so the compressor sees context across files, as in 7z solid mode.
 2. **Parallel decompression.** The stream is cut into fixed-size *blocks*, and each block is
-   compressed independently, so every core can decode a block. Solid 7z decodes on a single core.
+   compressed independently, so every core can decode a block. A solid 7z folder decodes in
+   parallel only when its encoder happened to split it into independent LZMA2 segments.
 3. **Instant listing and random access.** One compressed index at the end of the file describes
    every block and every entry. Extracting one file reads only the blocks it overlaps.
 4. **In-place extraction.** Blocks are stored in stream order, so the archive can be freed block by

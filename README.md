@@ -90,7 +90,7 @@ installing and `find_package(slz)` in [docs/building.md](docs/building.md).
 | format | methods | listing | extraction | in-place |
 |---|---|---|---|---|
 | zip, zip64, self-extracting zip | store, deflate, LZMA | instant (central directory) | parallel per entry | yes, resumes inside an entry |
-| 7z | LZMA, LZMA2, Deflate, Copy, BCJ x86; plain or packed headers | instant (header) | parallel per folder (solid block) | yes, folder granularity |
+| 7z | LZMA, LZMA2, Deflate, Copy, BCJ x86; plain or packed headers | instant (header) | parallel per folder, and per LZMA2 segment inside a solid folder | yes, folder granularity |
 | tar | ustar, GNU, pax | fast (headers only, data skipped) | parallel per entry | yes |
 | gzip | deflate, single member | instant | streaming | yes, resumes inside the stream |
 | tar.gz | deflate | on first use (needs a full pass) | single streaming pass | no |
@@ -107,8 +107,8 @@ Refused with a clear error: encrypted entries (zip, 7z AES), other methods (bzip
 The banner at the top shows the newest run on `main` and this chart follows the decoders over the last
 runs; CI redraws both. Every push that changes code is benchmarked on a GitHub-hosted runner, in one job,
 against zlib, zlib-ng, libdeflate, xz, libarchive (bsdtar) and pigz built from pinned sources, the official
-7-Zip build, and the runner's unzip, GNU tar and Python. On solid 7z archives 7-Zip is faster than slz:
-parallel decoding of solid blocks is first on the [roadmap](docs/roadmap.md).
+7-Zip build, and the runner's unzip, GNU tar and Python. Solid 7z blocks written by a multithreaded
+LZMA2 encoder (7-Zip's default) are decoded in parallel, one independent segment per thread.
 
 [docs/benchmarks.md](docs/benchmarks.md) explains how runner noise and regressions are handled and how to run
 the same benchmark, and has the full tables measured on a 24-thread desktop.

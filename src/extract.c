@@ -27,6 +27,7 @@ typedef struct {
     volatile int64_t next, files, skipped, out, total;
     volatile int64_t err; /* first error, set once with os_cas, read atomically */
     int destr, resumed;
+    unsigned ft; /* decoder threads inside one 7z folder (solid LZMA2 splits into segments) */
     int (*unit)(void *w, size_t k, const jrec *res); /* one work item: an entry, or a 7z folder */
     uint64_t punch_base;                             /* never punch below this (7z signature header) */
     os_fd arw, jf;
@@ -313,7 +314,7 @@ static int one7(void *wv, size_t k, const jrec *res) {
     w->src.end = f->pack_off + f->pack_size;
     if (!f->nsub) return 0;
     if ((r = z7_supported(f))) return r; /* before creating any file */
-    if ((r = split_next(&s)) || (r = z7_decode(w->in, f, split_wr, &s))) return r;
+    if ((r = split_next(&s)) || (r = z7_decode(w->in, f, split_wr, &s, j->ft))) return r;
     if (s.left || w->e || s.k != f->nsub || (f->has_crc && s.fcrc != f->crc)) return SLZ_E_CORRUPT;
     return j->destr && w->src.end - j->lastck >= j->every ? ckpt(w, w->src.end * 8, 1) : 0;
 }
@@ -674,6 +675,11 @@ int slz_extract(slz_archive *a, const char *dest, slz_opts *opts) {
     j.arw = j.jf = OS_BAD;
     j.destr = !!(opts->flags & SLZ_DESTRUCTIVE);
     j.every = opts->checkpoint ? opts->checkpoint : 64u << 20;
+    { /* threads left over when there are fewer work items than threads go inside 7z folders */
+        unsigned t = opts->threads ? opts->threads : os_ncpu();
+        unsigned units = j.destr ? 1 : (unsigned)MIN(j.n ? j.n : 1, 64);
+        j.ft = t > units ? t / units : 1;
+    }
     if (a->partial && !j.destr) return SLZ_E_STATE;
     if (a->fd == OS_BAD) return SLZ_E_STATE;
     if (j.destr && a->fmt == SLZ_TGZ) return SLZ_E_NOTSUP;
