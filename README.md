@@ -1,8 +1,23 @@
 # slz
 
+[![ci](https://github.com/seregonwar/slibz/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/seregonwar/slibz/actions/workflows/ci.yml)
+[![bench](https://github.com/seregonwar/slibz/actions/workflows/bench.yml/badge.svg?branch=main)](https://github.com/seregonwar/slibz/actions/workflows/bench.yml)
+[![DEFLATE decode](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fseregonwar%2Fslibz%2Fbench-data%2Fbadges%2Fdeflate.json)](#continuous-benchmarks)
+[![LZMA2 decode](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fseregonwar%2Fslibz%2Fbench-data%2Fbadges%2Flzma2.json)](#continuous-benchmarks)
+[![list 500k zip entries](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fseregonwar%2Fslibz%2Fbench-data%2Fbadges%2Flist.json)](#continuous-benchmarks)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/seregonwar/slibz)](https://github.com/seregonwar/slibz/stargazers)
+
 **Fast, hardened archive extraction in C99 + assembly: zip/zip64, 7z, tar, gzip, tar.gz.**
 Lists huge archives in milliseconds, extracts at SSD speed, and can extract *in place*, freeing the
 archive's space as it goes, without needing extra free disk.
+
+<a href="#continuous-benchmarks"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/seregonwar/slibz/bench-data/svg/hero-dark.svg">
+  <img alt="Wall time of slz, unzip, bsdtar, 7-Zip, GNU tar, pigz and Python listing and extracting zip, tar.gz and 7z archives, and in-memory DEFLATE and LZMA2 decoding speed of slz, zlib, zlib-ng, libdeflate and xz, measured by CI on the latest commit of main" src="https://raw.githubusercontent.com/seregonwar/slibz/bench-data/svg/hero-light.svg">
+</picture></a>
+
+<sub>Redrawn by CI after every push to `main`, on a GitHub-hosted runner: [how it is measured](#continuous-benchmarks) · [detailed tables](#performance)</sub>
 
 Created by **Seregon**. Copyright (c) 2026 Seregon. Released under the [MIT License](LICENSE).
 
@@ -24,12 +39,14 @@ Windows, macOS, Linux, FreeBSD, WebAssembly (WASI). No dependencies.
 3. [In-place (destructive) extraction](#in-place-destructive-extraction)
 4. [Security](#security)
 5. [Verification](#verification)
-6. [Performance](#performance)
-7. [Platforms](#platforms)
-8. [Integration](#integration)
-9. [Project layout](#project-layout)
-10. [Limits and roadmap](#limits-and-roadmap)
-11. [License](#license)
+6. [Continuous benchmarks](#continuous-benchmarks)
+7. [Performance](#performance)
+8. [Platforms](#platforms)
+9. [Integration](#integration)
+10. [Project layout](#project-layout)
+11. [Limits and roadmap](#limits-and-roadmap)
+12. [Star history](#star-history)
+13. [License](#license)
 
 ## Quick start
 
@@ -180,6 +197,47 @@ output macro.
 
 The CI workflow (`.github/workflows/ci.yml`) runs all of this on Linux x86-64 and arm64 (GCC, Clang),
 macOS arm64, Windows (MSVC, clang-cl), FreeBSD 14 and WASI.
+
+## Continuous benchmarks
+
+Every push that changes code is benchmarked by [`.github/workflows/bench.yml`](.github/workflows/bench.yml)
+on a GitHub-hosted `ubuntu-24.04` runner, with slz and its competitors in the same job. zlib, zlib-ng,
+libdeflate, xz (liblzma), libarchive (bsdtar) and pigz are built from pinned, checksummed sources, and
+7-Zip (`7zz`) is its official build ([`.github/bench/deps.sh`](.github/bench/deps.sh)); unzip, GNU tar
+and Python are the runner's. The banner at the top is redrawn from the newest run on `main` and prints
+its date, commit, CPU and versions; the chart below follows the decoders over the last runs on `main`.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/seregonwar/slibz/bench-data/svg/trend-dark.svg">
+  <img alt="In-memory DEFLATE and LZMA2 decoding speed of slz, zlib, zlib-ng, libdeflate and xz over the last runs on main" src="https://raw.githubusercontent.com/seregonwar/slibz/bench-data/svg/trend-light.svg">
+</picture>
+
+- **What runs**: the in-memory decoders over the Silesia corpus (`tests/bench_inflate.c`,
+  `tests/bench_lzma.c`), then whole-process listing and extraction of zip, tar.gz and 7z archives
+  (`tests/bench.py`, best of 3 runs, warm page cache).
+- **Noise**: a hosted runner is a shared virtual machine with a few threads, and the CPU model can
+  change between runs, so absolute numbers move from run to run and are lower than on the machine of
+  the [Performance](#performance) tables. The speed of slz *relative* to a competitor measured in the
+  same job is much steadier, and that is what is compared over time.
+- **Regressions**: each run's job summary compares slz's speed relative to the format's standard tool
+  (zlib, xz, unzip, GNU tar, 7-Zip) with the last run on `main`, on the same CPU model when there is
+  one, and adds a warning when it drops by more than the noise: 3 robust standard deviations of the
+  recent runs on that CPU, at least 5% (10% until there are five of them). A warning never fails the
+  build: re-run the job to confirm it.
+- **Data**: results, history and badges live on the
+  [`bench-data`](https://github.com/seregonwar/slibz/tree/bench-data) branch
+  ([dashboard](https://github.com/seregonwar/slibz/blob/bench-data/README.md),
+  [`history.json`](https://github.com/seregonwar/slibz/blob/bench-data/history.json)), written only by
+  runs on `main`, so `main`'s history has no bot commits. Runs on other branches and pull requests
+  upload the same report and banners as an artifact.
+
+To run the same benchmark on Linux (x86-64; needs a C compiler, CMake, curl, zip and unzip):
+
+```bash
+bash .github/bench/deps.sh tools deps && bash .github/bench/deps.sh corpus corpus
+python3 .github/bench/run.py --deps deps --corpus corpus --work work --out out
+python3 .github/bench/report.py publish out/result.json --site site --preview   # banners in site/svg
+```
 
 ## Performance
 
@@ -334,6 +392,13 @@ Planned:
 4. zstd and bzip2 decoders, then encryption (zip AES, 7z AES).
 5. 7z checkpoints inside solid folders (persist the LZMA model and window).
 6. Overlapping fsync with decoding in in-place mode.
+
+## Star history
+
+<a href="https://www.star-history.com/#seregonwar/slibz&Date"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=seregonwar/slibz&type=Date&theme=dark">
+  <img alt="Star history of seregonwar/slibz" src="https://api.star-history.com/svg?repos=seregonwar/slibz&type=Date">
+</picture></a>
 
 ## License
 

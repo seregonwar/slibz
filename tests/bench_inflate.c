@@ -1,13 +1,24 @@
 /* In-memory DEFLATE decode throughput: slz vs zlib vs libdeflate.
  * Copyright (c) 2026 Seregon. SPDX-License-Identifier: MIT
  *
- *   bench_inflate <file>...   (each file is compressed with zlib level 6, then decoded N times) */
+ *   bench_inflate <file>...   (each file is compressed with zlib level 6, then decoded N times)
+ *
+ * Built with -DSLZ_BENCH_ZLIBNG and bench_inflate_zng.c, it adds a zlib-ng column that decodes
+ * the same zlib streams. */
 #define _POSIX_C_SOURCE 200809L
 #include "internal.h"
 #include <libdeflate.h>
 #include <stdio.h>
 #include <time.h>
 #include <zlib.h>
+
+#ifdef SLZ_BENCH_ZLIBNG
+#define NDEC 4
+const char *bench_zng_version(void);
+int bench_zng_inflate(const uint8_t *c, size_t cn, uint8_t *o, size_t n);
+#else
+#define NDEC 3
+#endif
 
 static double now(void) {
     struct timespec t;
@@ -39,18 +50,25 @@ int main(int argc, char **argv) {
     int a;
     inf *z = inf_new();
     struct libdeflate_decompressor *ld = libdeflate_alloc_decompressor();
-    double tot[3] = {0, 0, 0};
+    double tot[NDEC] = {0};
     size_t totn = 0;
+#ifdef SLZ_BENCH_ZLIBNG
+    printf("zlib %s, libdeflate %s, zlib-ng %s\n", zlibVersion(), LIBDEFLATE_VERSION_STRING, bench_zng_version());
+    printf("%-14s %10s %10s %10s %10s %10s   (MB/s of output, best of 5)\n", "file", "size", "slz", "zlib",
+           "libdeflate", "zlib-ng");
+#else
     printf("zlib %s, libdeflate %s\n", zlibVersion(), LIBDEFLATE_VERSION_STRING);
     printf("%-14s %10s %10s %10s %10s   (MB/s of output, best of 5)\n", "file", "size", "slz", "zlib",
            "libdeflate");
+#endif
     for (a = 1; a < argc; a++) {
         FILE *f = fopen(argv[a], "rb");
         size_t n, cn;
         uint8_t *d, *c, *o;
         z_stream zs;
-        double best[3] = {1e9, 1e9, 1e9};
+        double best[NDEC];
         int it, k;
+        for (k = 0; k < NDEC; k++) best[k] = 1e9;
         if (!f) continue;
         fseek(f, 0, SEEK_END);
         n = (size_t)ftell(f);
@@ -108,12 +126,22 @@ int main(int argc, char **argv) {
             libdeflate_deflate_decompress(ld, c, cn, o, n, &got);
             t0 = now() - t0;
             if (t0 < best[2]) best[2] = t0;
+#ifdef SLZ_BENCH_ZLIBNG
+            t0 = now();
+            k = bench_zng_inflate(c, cn, o, n);
+            t0 = now() - t0;
+            if (k) {
+                fprintf(stderr, "zlib-ng error %s\n", argv[a]);
+                return 1;
+            }
+            if (t0 < best[3]) best[3] = t0;
+#endif
         }
         {
             const char *b = strrchr(argv[a], '/');
             printf("%-14s %10zu", b ? b + 1 : argv[a], n);
         }
-        for (k = 0; k < 3; k++) {
+        for (k = 0; k < NDEC; k++) {
             printf(" %10.0f", (double)n / best[k] / 1e6);
             tot[k] += best[k];
         }
@@ -123,7 +151,8 @@ int main(int argc, char **argv) {
         free(c);
         free(o);
     }
-    printf("%-14s %10zu %10.0f %10.0f %10.0f\n", "TOTAL", totn, totn / tot[0] / 1e6, totn / tot[1] / 1e6,
-           totn / tot[2] / 1e6);
+    printf("%-14s %10zu", "TOTAL", totn);
+    for (a = 0; a < NDEC; a++) printf(" %10.0f", totn / tot[a] / 1e6);
+    printf("\n");
     return 0;
 }
