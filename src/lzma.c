@@ -285,35 +285,42 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
     uint32_t rep0 = s->rep[0], rep1 = s->rep[1], rep2 = s->rep[2], rep3 = s->rep[3];
     const unsigned pbm = (1u << s->pb) - 1, lpm = (1u << s->lp) - 1, lc = s->lc;
     const uint8_t *ifast; /* last input position at which a symbol may start without a refill */
+    size_t dlim;          /* window position at which output is handed to wr: flush or wrap */
     int r = 0;
 #define SAVE()                                                                                               \
     (s->range = rc.range, s->code = rc.code, s->ip = (size_t)(rc.ip - s->ib), s->dpos = dpos, s->pos = pos,  \
      s->state = state, s->rep[0] = rep0, s->rep[1] = rep1, s->rep[2] = rep2, s->rep[3] = rep3)
-#define PUT(b)                                                                                               \
-    do {                                                                                                     \
-        uint8_t byte_ = (b); /* evaluated before dpos changes */                                             \
-        dict[dpos++] = byte_;                                                                                \
-        if (dpos == dsize) {                                                                                 \
-            s->dpos = dpos;                                                                                  \
-            wrap(s);                                                                                         \
-            dpos = 0;                                                                                        \
-        }                                                                                                    \
-    } while (0)
+#define DLIM() (dlim = dsize - s->dflushed > LZ_FLUSH ? s->dflushed + LZ_FLUSH : dsize)
     rc.range = s->range;
     rc.code = s->code;
     if (!s->ieof && s->ie - s->ip < LZ_NEED) refill(s);
+    if (s->err) return s->err;
     rc.ip = s->ib + s->ip;
     ifast = s->ib + s->ie - (s->ieof ? 0 : LZ_NEED);
-    while (n && !s->err) {
-        unsigned ps = (unsigned)pos & pbm, len;
+    DLIM();
+    /* A symbol may leave dpos anywhere up to dsize (a full window); the slow path at the start of
+     * the next one hands the output to wr. */
+    while (n) {
+        unsigned ps, len;
         uint32_t d;
-        if (rc.ip > ifast) { /* fewer than LZ_NEED bytes left, or read past the end of the input */
-            s->ip = (size_t)(rc.ip - s->ib);
-            refill(s);
-            rc.ip = s->ib + s->ip;
-            ifast = s->ib + s->ie - (s->ieof ? 0 : LZ_NEED);
+        if (dpos >= dlim || rc.ip > ifast) { /* slow path: output, or fewer than LZ_NEED input bytes */
+            s->dpos = dpos;
+            if (dpos == dsize) {
+                wrap(s);
+                dpos = 0;
+            } else if (dpos >= dlim) {
+                flush(s);
+            }
+            if (rc.ip > ifast) {
+                s->ip = (size_t)(rc.ip - s->ib);
+                refill(s);
+                rc.ip = s->ib + s->ip;
+                ifast = s->ib + s->ie - (s->ieof ? 0 : LZ_NEED);
+            }
             if (s->err) break;
+            DLIM();
         }
+        ps = (unsigned)pos & pbm;
         if (!bit(&rc, &s->m.is_match[state][ps])) { /* literal */
             unsigned prev = pos ? dict[dpos ? dpos - 1 : dsize - 1] : 0, sym;
             uint16_t *p = s->lit + 0x300 * ((((unsigned)pos & lpm) << lc) + (prev >> (8 - lc)));
@@ -323,7 +330,7 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
             } else {
                 sym = tree(&rc, p, 8);
             }
-            PUT((uint8_t)sym);
+            dict[dpos++] = (uint8_t)sym;
             pos++;
             n--;
             state = state < 4 ? 0 : state < 10 ? state - 3 : state - 6;
@@ -363,7 +370,8 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
                             break;
                         }
                         state = state < 7 ? 9 : 11;
-                        PUT(dict[dpos > rep0 ? dpos - rep0 - 1 : dpos + dsize - rep0 - 1]);
+                        dict[dpos] = dict[dpos > rep0 ? dpos - rep0 - 1 : dpos + dsize - rep0 - 1];
+                        dpos++;
                         pos++;
                         n--;
                         continue;
@@ -393,8 +401,6 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
             }
             n -= len;
             pos += len;
-            /* copy in runs that are contiguous on both sides of the circular window; a forward
-             * byte copy is correct for overlapping runs (distance < length) */
             from = dpos > rep0 ? dpos - rep0 - 1 : dpos + dsize - rep0 - 1;
             if (len <= dsize - dpos && len <= dsize - from) { /* contiguous on both sides */
                 uint8_t *dst = dict + dpos, *end = dst + len;
@@ -420,11 +426,6 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
                         *dst++ = *src++;
                     while (dst < end);
                 }
-                if (dpos == dsize) {
-                    s->dpos = dpos;
-                    wrap(s);
-                    dpos = 0;
-                }
             } else {
                 /* copy in runs that are contiguous on both sides of the circular window; a forward
                  * byte copy is correct for overlapping runs (distance < length) */
@@ -438,24 +439,27 @@ static int lzma(lzd *s, uint64_t n, int eos_ok) {
                     from += k;
                     len -= (unsigned)k;
                     if (from == dsize) from = 0;
-                    if (dpos == dsize) {
+                    if (dpos == dsize && len) {
                         s->dpos = dpos;
                         wrap(s);
                         dpos = 0;
                     }
                 }
+                if (s->err) break;
+                DLIM();
             }
         }
-        if (dpos - s->dflushed >= LZ_FLUSH) {
-            s->dpos = dpos;
-            flush(s);
-        }
+    }
+    if (dpos == dsize) { /* keep dpos < dsize between calls */
+        s->dpos = dpos;
+        wrap(s);
+        dpos = 0;
     }
     SAVE();
     if (s->ip > s->ie && !s->err) s->err = SLZ_E_CORRUPT; /* the last symbol read past the input */
     return s->err ? s->err : r; /* the root cause (e.g. truncated input) wins */
 #undef SAVE
-#undef PUT
+#undef DLIM
 }
 
 static void dict_reset(lzd *s) {
