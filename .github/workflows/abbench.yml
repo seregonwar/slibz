@@ -17,6 +17,8 @@ jobs:
       matrix:
         include:
           - { name: x86-gcc, os: ubuntu-latest, cc: gcc }
+          - { name: x86-gcc-2, os: ubuntu-latest, cc: gcc }
+          - { name: x86-gcc-3, os: ubuntu-latest, cc: gcc }
           - { name: x86-clang, os: ubuntu-latest, cc: clang }
           - { name: arm64, os: ubuntu-24.04-arm, cc: gcc }
     steps:

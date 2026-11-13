@@ -196,14 +196,14 @@ profile() { # cpu-clock sampling of the variants in $PROF (default: the first) a
     shift
     local flags="$*" o pre=$PWD/deps/$cc vs perf m sym files bin=
     o=$(objdir "$cc" "$flags")
-    vs=${PROF:-$(sed -n 1p v/order)}
+    vs=${PROF:-$(sed -n 1p v/order)} # modes: <variant> (streaming) or <variant>_d (slz_inflate)
     files=$(for f in $FILES; do echo "silesia/$f"; done)
-    for m in $vs; do
+    for m in $(for m in $vs; do echo "${m%_d}"; done | sort -u); do
         [ -f "$o/$m.o" ] || { echo "profile: no $o/$m.o, run bench $cc $flags first"; return 1; }
     done
     perf=$(perfbin) || { echo "profile: perf unavailable, skipped"; return 0; }
     echo "perf: $("$perf" --version)"
-    for m in $vs; do # one slz variant per binary: its static functions have unique names
+    for m in $(for m in $vs; do echo "${m%_d}"; done | sort -u); do # one slz variant per binary: its static functions have unique names
         mkdir -p "$o/prof/$m"
         vh "$m" > "$o/prof/$m/variants.h"
         # shellcheck disable=SC2086
@@ -211,7 +211,7 @@ profile() { # cpu-clock sampling of the variants in $PROF (default: the first) a
             "$pre/lib/libz-ng.a" "$pre/lib/libz.a" -o "$o/prof/$m/abbench"
     done
     for m in $vs libdeflate; do
-        [ "$m" = libdeflate ] || bin=$o/prof/$m/abbench # libdeflate: the last variant's binary
+        [ "$m" = libdeflate ] || bin=$o/prof/${m%_d}/abbench # libdeflate: the last variant's binary
         echo "== perf $cc $flags: $m"
         # shellcheck disable=SC2086
         "$perf" stat -e task-clock,cycles,instructions,branches,branch-misses -- taskset -c "$CPU" \
