@@ -2,6 +2,13 @@
 name: ci
 on: [push, pull_request, workflow_dispatch]
 
+permissions:
+  contents: read
+
+concurrency:  # a new push cancels the older run of the same branch or PR; every commit on main runs to the end
+  group: ci-${{ github.event_name }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   posix:
     strategy:
@@ -19,14 +26,14 @@ jobs:
       - name: tools
         run: |
           if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -qq && sudo apt-get install -y -qq 7zip zlib1g-dev liblzma-dev; fi
-          if [ "$RUNNER_OS" = macOS ]; then brew install sevenzip xz; fi
+          if [ "$RUNNER_OS" = macOS ]; then HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install sevenzip xz; fi
       - name: build (ASan + UBSan + fault injection)
         run: |
           cmake -S . -B build -DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_BUILD_TYPE=RelWithDebInfo \
                 -DSLZ_SANITIZE=ON -DSLZ_FAULT_INJECTION=ON
           cmake --build build -j4
       - name: tests (round trips, hostile archives, fuzz, kills, injected I/O faults, resume)
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure -j 8
       - name: release build + install
         run: |
           cmake -S . -B rel -DCMAKE_C_COMPILER=${{ matrix.cc }} -DSLZ_TESTS=OFF
@@ -44,12 +51,19 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: keep Defender out of the test directories
+        # every test spawns many short processes that write many small files: real-time scanning of
+        # the workspace and the temp directory dominated the run time
+        run: |
+          Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, $env:RUNNER_TEMP
+          Get-MpComputerStatus | Format-List RealTimeProtectionEnabled, AMRunningMode
       - name: build (fault injection)
         run: |
           cmake -S . -B build -A x64 ${{ matrix.extra }} -DSLZ_FAULT_INJECTION=ON
           cmake --build build --config Release
       - name: tests
-        run: ctest --test-dir build -C Release --output-on-failure
+        env: { TEMP: "${{ runner.temp }}", TMP: "${{ runner.temp }}" }
+        run: ctest --test-dir build -C Release --output-on-failure -j 8
 
   freebsd:
     runs-on: ubuntu-latest
@@ -58,11 +72,14 @@ jobs:
       - uses: vmactions/freebsd-vm@v1
         with:
           release: "14.2"
+          cpu: 4
+          copyback: false
+          cache-after-prepare: true  # the VM image with the packages below is cached: no pkg install per run
           prepare: pkg install -y cmake python3 7-zip
           run: |
             cmake -S . -B build -DSLZ_FAULT_INJECTION=ON
             cmake --build build -j4
-            ctest --test-dir build --output-on-failure
+            ctest --test-dir build --output-on-failure -j 8
 
   wasm:
     runs-on: ubuntu-latest
@@ -71,9 +88,10 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       - name: wasi-sdk
+        env: { GH_TOKEN: "${{ github.token }}" }  # authenticated: the anonymous API rate limit is shared per runner IP
         run: |
-          url=$(curl -fsSL https://api.github.com/repos/WebAssembly/wasi-sdk/releases/latest | grep -o 'https://[^"]*x86_64-linux.tar.gz' | head -1)
-          mkdir -p wasi && curl -fsSL "$url" | tar -xz -C wasi --strip-components=1
+          gh release download --repo WebAssembly/wasi-sdk --pattern '*x86_64-linux.tar.gz' --output wasi.tar.gz
+          mkdir -p wasi && tar -xzf wasi.tar.gz -C wasi --strip-components=1
       - name: build and run under WASI
         run: |
           wasi/bin/clang --target=wasm32-wasip1 -O2 -Wall -Wextra -Iinclude -Isrc src/*.c tools/slz.c -o slz.wasm
