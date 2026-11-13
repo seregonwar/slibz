@@ -1,6 +1,6 @@
 {
- "commit": "0464858b09d82798e6bb976d38ff2def22d3a73f",
- "commit_time": "2026-11-13T15:40:57Z",
+ "commit": "6a39a2e2a6751aa40db974ebdc94d05b5be21d62",
+ "commit_time": "2026-11-13T16:50:23Z",
  "decode": {
   "best_of": {
    "deflate": "5 per process, 3 processes",
@@ -9,41 +9,41 @@
   "bytes": 211938580,
   "corpus": "Silesia",
   "deflate": {
-   "libdeflate": 1165.0,
-   "slz": 1040.0,
-   "zlib": 500.0,
-   "zlib-ng": 908.0
+   "libdeflate": 926.0,
+   "slz": 799.0,
+   "zlib": 398.0,
+   "zlib-ng": 701.0
   },
   "files": 12,
   "lzma2": {
-   "slz": 128.0,
-   "xz": 158.0
+   "slz": 94.0,
+   "xz": 130.0
   },
   "rounds": {
    "deflate": [
     {
-     "libdeflate": 1165.0,
-     "slz": 1040.0,
-     "zlib": 500.0,
-     "zlib-ng": 908.0
+     "libdeflate": 925.0,
+     "slz": 795.0,
+     "zlib": 398.0,
+     "zlib-ng": 701.0
     },
     {
-     "libdeflate": 1160.0,
-     "slz": 1030.0,
-     "zlib": 498.0,
-     "zlib-ng": 904.0
+     "libdeflate": 926.0,
+     "slz": 798.0,
+     "zlib": 398.0,
+     "zlib-ng": 701.0
     },
     {
-     "libdeflate": 1158.0,
-     "slz": 1032.0,
-     "zlib": 498.0,
-     "zlib-ng": 904.0
+     "libdeflate": 926.0,
+     "slz": 799.0,
+     "zlib": 398.0,
+     "zlib-ng": 701.0
     }
    ],
    "lzma2": [
     {
-     "slz": 128.0,
-     "xz": 158.0
+     "slz": 94.0,
+     "xz": 130.0
     }
    ]
   }
@@ -51,83 +51,83 @@
  "e2e": {
   "7z": {
    "silesia-nonsolid.7z": {
-    "7z l": 0.00259,
-    "7z x": 1.561835,
-    "bsdtar -x": 1.646104,
-    "slz list": 0.001194,
-    "slz x": 0.789794,
-    "slz x -j 1": 1.905541
+    "7z l": 0.002944,
+    "7z x": 1.891801,
+    "bsdtar -x": 1.910806,
+    "slz list": 0.001411,
+    "slz x": 1.059192,
+    "slz x -j 1": 2.523415
    },
    "silesia.7z": {
-    "7z l": 0.002648,
-    "7z x": 1.027877,
-    "bsdtar -x": 1.638025,
-    "slz list": 0.001164,
-    "slz x": 1.802398,
-    "slz x -j 1": 1.814001
+    "7z l": 0.002881,
+    "7z x": 1.242573,
+    "bsdtar -x": 1.858319,
+    "slz list": 0.00145,
+    "slz x": 2.437092,
+    "slz x -j 1": 2.432669
    }
   },
   "list": {
    "500k entries": {
-    "7z l": 3.694904,
-    "bsdtar -t": 2.415441,
-    "python zipfile": 1.793422,
-    "slz": 0.07398,
-    "unzip -Z1": 0.469541
+    "7z l": 4.683071,
+    "bsdtar -t": 3.114213,
+    "python zipfile": 2.276704,
+    "slz": 0.116714,
+    "unzip -Z1": 0.670401
    },
    "silesia.zip": {
-    "7z l": 0.002418,
-    "bsdtar -t": 0.001449,
-    "python zipfile": 0.02361,
-    "slz": 0.001039,
-    "unzip -Z1": 0.001548
+    "7z l": 0.002845,
+    "bsdtar -t": 0.001752,
+    "python zipfile": 0.030841,
+    "slz": 0.001359,
+    "unzip -Z1": 0.00192
    }
   },
   "runs": 3,
   "targz": {
    "silesia.tar.gz": {
-    "GNU tar -xzf": 0.974741,
-    "bsdtar": 0.349945,
-    "pigz -d | tar -x": 0.368253,
-    "slz": 0.265774
+    "GNU tar -xzf": 1.237246,
+    "bsdtar": 0.435961,
+    "pigz -d | tar -x": 0.583819,
+    "slz": 0.327049
    }
   },
   "threads": 4,
   "zip": {
    "silesia.zip": {
-    "7z x": 0.742481,
-    "bsdtar": 0.309788,
-    "python zipfile": 0.619741,
-    "slz": 0.831891,
-    "slz -j 1": 0.788136,
-    "unzip": 1.096661
+    "7z x": 0.976346,
+    "bsdtar": 0.403819,
+    "python zipfile": 0.827952,
+    "slz": 0.116891,
+    "slz -j 1": 0.325475,
+    "unzip": 1.326536
    }
   }
  },
  "env": {
   "cc": "gcc 13.3.0",
-  "cpu": "AMD EPYC 9V45 96-Core Processor",
-  "image": "ubuntu24 20261101.360.1",
+  "cpu": "AMD EPYC 7763 64-Core Processor",
+  "image": "ubuntu24 20261111.370.1",
   "kernel": "7.0.0-1017-azure",
   "os": "Ubuntu 24.04.5 LTS",
   "runner": "GitHub Actions",
   "threads": 4
  },
  "event": "push",
- "measured_at": "2026-11-13T15:44:44Z",
+ "measured_at": "2026-11-13T16:54:36Z",
  "ref": "refs/heads/main",
  "repository": "seregonwar/slibz",
  "run_attempt": "1",
- "run_id": "43455055038",
- "run_url": "https://github.com/seregonwar/slibz/actions/runs/43455055038",
+ "run_id": "43466750365",
+ "run_url": "https://github.com/seregonwar/slibz/actions/runs/43466750365",
  "schema": 1,
- "subject": "inflate: x86-64 gcc codegen: bzhi extra bits, 64-bit match lengths, indexed long copy",
+ "subject": "Add native .slz archive format",
  "timing": {
-  "build": 10.1,
-  "deflate": 33.4,
-  "e2e": 83.5,
-  "lzma2": 87.5,
-  "total": 215.5
+  "build": 5.2,
+  "deflate": 44.3,
+  "e2e": 101.4,
+  "lzma2": 88.5,
+  "total": 240.8
  },
  "versions": {
   "7-Zip": "7-Zip (z) 26.06 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-11-06",
