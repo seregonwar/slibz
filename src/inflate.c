@@ -636,7 +636,7 @@ int inf_run(inf *s) {
 }
 
 int slz_inflate(const void *in, size_t in_len, void *out, size_t out_cap, size_t *in_used, size_t *out_len) {
-    static const uint8_t none[1];
+    static const uint8_t none[1] = {0};
     inf *s = (inf *)malloc(sizeof *s); /* decode tables only: no buffers */
     int r;
     if (in_used) *in_used = 0;

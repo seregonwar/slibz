@@ -237,7 +237,7 @@ static void put_match(bitw *w, unsigned len, unsigned d) {
     static const unsigned short db[30] = {1,    2,    3,    4,    5,    7,     9,     13,    17,  25,
                                           33,   49,   65,   97,   129,  193,   257,   385,   513, 769,
                                           1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
-    unsigned c = 28, k = 29;
+    unsigned c = 28, k = 30;
     while (lb[c] > len)
         c--;
     put_sym(w, 257 + c);
