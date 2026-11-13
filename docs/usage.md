@@ -9,6 +9,7 @@ slz l archive.7z                 # list everything
 slz l archive.zip docs/images    # direct children of a directory
 slz x archive.zip out            # extract (all CPU cores)
 slz x big.zip out -d             # in-place: frees big.zip while extracting, resumable
+slz --version                    # library version, e.g. "slz 0.1.0"
 ```
 
 Options for `x`: `-o` overwrite, `-d` destructive, `-j N` threads, `-c MiB` checkpoint interval,
@@ -43,6 +44,19 @@ slz_close(a);
 
 In-place mode is described in [In-place (destructive) extraction](in-place-extraction.md), building and
 linking in [Building and integration](building.md).
+
+### Version
+
+```c
+unsigned v = slz_version_number();      /* major * 10000 + minor * 100 + patch: 0.1.0 -> 100 */
+const char *s = slz_version_string();   /* "0.1.0", static storage */
+if (v / 10000 != SLZ_VERSION_MAJOR) { /* linked against a library with a different major version */ }
+```
+
+The functions report the library that is actually linked; the macros `SLZ_VERSION_MAJOR`,
+`SLZ_VERSION_MINOR`, `SLZ_VERSION_PATCH`, `SLZ_VERSION_NUMBER` and `SLZ_VERSION_STRING` describe the
+header compiled against (as `LZ4_versionNumber` / `LZ4_versionString` in LZ4). The version is
+defined once, in `slz.h`; CMake reads its project version from there.
 
 ### In-memory DEFLATE (zero-copy)
 

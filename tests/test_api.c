@@ -380,8 +380,17 @@ static void test_inflate(void) {
         }
 }
 
+static void test_version(void) {
+    char want[32];
+    snprintf(want, sizeof want, "%d.%d.%d", SLZ_VERSION_MAJOR, SLZ_VERSION_MINOR, SLZ_VERSION_PATCH);
+    CHECK(slz_version_number() == SLZ_VERSION_NUMBER);
+    CHECK(SLZ_VERSION_NUMBER == SLZ_VERSION_MAJOR * 10000 + SLZ_VERSION_MINOR * 100 + SLZ_VERSION_PATCH);
+    CHECK(!strcmp(slz_version_string(), SLZ_VERSION_STRING) && !strcmp(SLZ_VERSION_STRING, want));
+}
+
 int main(int argc, char **argv) {
     if (argc >= 2 && !strcmp(argv[1], "unit")) {
+        test_version();
         test_sanitize();
         test_tree();
         test_journal();
