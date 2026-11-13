@@ -165,7 +165,7 @@ static inline unsigned bit(rcs *rc, uint16_t *p) {
 #else
 #define LZ_SEL(m, a, b) ((a) ^ (((a) ^ (b)) & (m)))
 #endif
-#if defined(__x86_64__) && defined(__GNUC__)
+#if defined(__x86_64__) && defined(__GNUC__) && !defined(__ILP32__)
 /* x86-64 GCC / clang: the bit as xz's asm decodes it. One compare of code with bound gives the
  * bit in the carry (set for 0); cmov picks range and code (and in bitn() the next probability),
  * sbb makes the mask. That is two instructions from bound to the next range instead of GCC's
@@ -213,6 +213,77 @@ static inline uint32_t bitn(rcs *rc, uint16_t *p, uint32_t *pr, uint32_t c0, uin
     *p = (uint16_t)(q - ((q + (PROB_OFF & m)) >> 5));
     return ~m;
 }
+
+/* Whole bit trees in one asm block, as xz decodes them (the technique of its range_decoder.h):
+ * normalization included, the bit as above, and the probability of the next node loaded from
+ * p + 4 * node (both children are adjacent) before the bit is known. sym holds the node doubled
+ * after its bit is known, which is also the byte offset of its probability. 5-8% faster than the C
+ * tree with bitn(), whose compiled form moves registers around the asm. */
+#define LZA_Y(x) x
+#define LZA_N(x)
+#define LZA_NORM                                                                                             \
+    "cmp $0x1000000, %[range]\n\t"                                                                           \
+    "jae 1f\n\t"                                                                                             \
+    "shl $8, %[code]\n\t"                                                                                    \
+    "movb (%[ip]), %b[code]\n\t"                                                                             \
+    "shl $8, %[range]\n\t"                                                                                   \
+    "inc %[ip]\n"                                                                                            \
+    "1:\n\t"
+/* range = bound, t0 = range - bound, t1 = code, code -= bound: the carry is set for a 0 */
+#define LZA_CALC(pr)                                                                                         \
+    "mov %[range], %[t0]\n\t"                                                                                \
+    "shr $11, %[range]\n\t"                                                                                  \
+    "imul %[" pr "], %[range]\n\t"                                                                           \
+    "sub %[range], %[t0]\n\t"                                                                                \
+    "mov %[code], %[t1]\n\t"                                                                                 \
+    "sub %[range], %[code]\n\t"
+/* one level of tree(), current probability in pr<a>, next one into pr<b>; F, M, L: first, middle,
+ * last level. The update pr -= (pr + (bit ? 0 : PROB_OFF)) >> 5 is stored at p + t1. */
+#define LZA_TREE(a, b, F, M, L)                                                                              \
+    F("movzwl 2(%[p]), %[pr" #a "]\n\t"                                                                      \
+      "mov $2, %[sym]\n\t"                                                                                   \
+      "movzwl 4(%[p]), %[pr" #b "]\n\t")                                                                     \
+    M("movzwl (%[p],%q[sym],4), %[pr" #b "]\n\t")                                                            \
+    L("add %[sym], %[sym]\n\t")                                                                              \
+    LZA_NORM LZA_CALC("pr" #a) "cmovae %[t0], %[range]\n\t"                                                  \
+    F("movzwl 6(%[p]), %[t0]\n\t"                                                                            \
+      "cmovae %[t0], %[pr" #b "]\n\t")                                                                       \
+    M("movzwl 2(%[p],%q[sym],4), %[t0]\n\t"                                                                  \
+      "lea (%q[sym],%q[sym]), %[sym]\n\t"                                                                    \
+      "cmovae %[t0], %[pr" #b "]\n\t")                                                                       \
+    "lea %c[off](%q[pr" #a "]), %[t0]\n\t"                                                                   \
+    "cmovb %[t1], %[code]\n\t"                                                                               \
+    "mov %[sym], %[t1]\n\t"                                                                                  \
+    "cmovae %[pr" #a "], %[t0]\n\t"                                                                          \
+    F("sbb $-1, %[sym]\n\t") M("sbb $-1, %[sym]\n\t") L("sbb %[last], %[sym]\n\t")                           \
+    "shr $5, %[t0]\n\t"                                                                                      \
+    "sub %[t0], %[pr" #a "]\n\t"                                                                             \
+    "mov %w[pr" #a "], (%[p],%q[t1],1)\n\t"
+#define LZA_TF(a, b) LZA_TREE(a, b, LZA_Y, LZA_N, LZA_N)
+#define LZA_TM(a, b) LZA_TREE(a, b, LZA_N, LZA_Y, LZA_N)
+#define LZA_TL(a, b) LZA_TREE(a, b, LZA_N, LZA_N, LZA_Y)
+#define LZA_TREE_ASM(rc, pv, symv, bits, code_)                                                              \
+    do {                                                                                                     \
+        uint32_t t0_, t1_, pr0_, pr1_;                                                                       \
+        __asm__(code_                                                                                        \
+                : [range] "+&r"((rc)->range), [code] "+&r"((rc)->code), [t0] "=&r"(t0_), [t1] "=&r"(t1_),    \
+                  [pr0] "=&r"(pr0_), [pr1] "=&r"(pr1_), [sym] "=&r"(symv), [ip] "+&r"((rc)->ip)              \
+                : [p] "r"(pv), [last] "n"((1 << (bits)) - 1), [off] "n"(-2017)                               \
+                : "cc", "memory");                                                                           \
+    } while (0)
+/* always inlined: GCC -O2 would call it, and the bits test is resolved at compile time */
+static inline __attribute__((always_inline)) unsigned tree(rcs *rc, uint16_t *p, unsigned bits) {
+    uint32_t sym;
+    if (bits == 8)
+        LZA_TREE_ASM(rc, p, sym, 8,
+                     LZA_TF(0, 1) LZA_TM(1, 0) LZA_TM(0, 1) LZA_TM(1, 0) LZA_TM(0, 1) LZA_TM(1, 0) LZA_TM(0, 1)
+                         LZA_TL(1, 0));
+    else if (bits == 6)
+        LZA_TREE_ASM(rc, p, sym, 6, LZA_TF(0, 1) LZA_TM(1, 0) LZA_TM(0, 1) LZA_TM(1, 0) LZA_TM(0, 1) LZA_TL(1, 0));
+    else
+        LZA_TREE_ASM(rc, p, sym, 3, LZA_TF(0, 1) LZA_TM(1, 0) LZA_TL(0, 1));
+    return sym;
+}
 #elif defined(__clang__)
 static inline uint32_t bitm(rcs *rc, uint16_t *p, uint32_t pr) {
     uint32_t bound, r1, c1;
@@ -247,6 +318,7 @@ static inline uint32_t bitn(rcs *rc, uint16_t *p, uint32_t *pr, uint32_t c0, uin
 }
 #endif
 
+#ifndef LZ_X86ASM
 /* MSB-first bit tree, p[1] the root. Each level loads the probabilities of both children of its
  * node before its bit is known, so the next level does not wait for a load. */
 static inline unsigned tree(rcs *rc, uint16_t *p, unsigned bits) {
@@ -258,6 +330,7 @@ static inline unsigned tree(rcs *rc, uint16_t *p, unsigned bits) {
     }
     return 2 * m - bitm(rc, p + m, pr) - (1u << bits);
 }
+#endif
 
 static inline unsigned rtree(rcs *rc, uint16_t *p, unsigned bits) { /* LSB-first bit tree, bits >= 1 */
     unsigned m = 1, r = 0, i;
