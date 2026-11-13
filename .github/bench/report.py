@@ -2,15 +2,17 @@
 # slz - Copyright (c) 2026 Seregon. SPDX-License-Identifier: MIT
 """Benchmark report of .github/workflows/bench.yml (Python 3.8+, stdlib only).
 
-    report.py stage RESULT --out DIR [--history FILE]
+    report.py stage RESULT --out DIR [--history FILE] [--ancestors FILE]
     report.py publish RESULT --site DIR [--preview]
 
 RESULT is the result.json of .github/bench/run.py. FILE and DIR/history.json hold the runs on main
 (history.json of the bench-data branch).
 
 stage writes DIR/summary.md (the job summary: this run, slz's speed relative to the competitors
-measured in the same job, and the change against the last run on main) and prints a ::warning::
-annotation for each change beyond the noise threshold. Hosted runners are noisy: it never fails.
+measured in the same job, and the change against the run on main of the nearest first-parent
+ancestor with the same setup: CPU model, threads, OS, runner image, kernel, compiler, competitor
+versions and benchmark parameters) and prints a ::warning:: annotation for each change beyond the
+noise threshold. Without such a run nothing is compared. Hosted runners are noisy: it never fails.
 
 publish adds RESULT to DIR/history.json and renders the newest run (RESULT itself with --preview):
 DIR/svg/{hero,trend}-{light,dark}.svg (README banners), DIR/badges/*.json (shields.io endpoint
@@ -163,33 +165,70 @@ def write(path, text):
         f.write(text)
 
 
-def baseline(res, hist):
-    """runs on main to compare with: other commits, on the same CPU model when there are any"""
+def setup(e):
+    """what must match for two runs to be comparable: hardware, runner image and toolchain, the
+    competitors' versions and the benchmark parameters"""
+    env, d, x = e.get("env") or {}, e.get("decode") or {}, e.get("e2e") or {}
+    return {
+        "CPU model": env.get("cpu"), "threads": env.get("threads"), "OS": env.get("os"),
+        "runner image": env.get("image"), "kernel": env.get("kernel"), "compiler": env.get("cc"),
+        "competitor versions": json.dumps(e.get("versions") or {}, sort_keys=True),
+        "corpus": [d.get("corpus"), d.get("files"), d.get("bytes")],
+        "decoder repetitions": json.dumps(d.get("best_of") or {}, sort_keys=True),
+        "archive runs": x.get("runs"),
+    }
+
+
+def mismatch(a, b):
+    sa, sb = setup(a), setup(b)
+    return [k for k in sa if sa[k] != sb[k]]
+
+
+def baseline(res, hist, ancestors=None):
+    """(candidates nearest first, the compatible ones among them, how they were ordered).
+    Candidates are the runs on main of the commit's first-parent ancestors (for a pull request: of
+    its base branch), nearest first; without the ancestry, the runs of older commits, newest first.
+    Only runs with the same setup (see setup()) are compatible."""
     other = [h for h in hist if h.get("commit") != res.get("commit")]
-    cpu = (res.get("env") or {}).get("cpu")
-    same = [h for h in other if (h.get("env") or {}).get("cpu") == cpu]
-    return (same, True) if same else (other, False)
+    if ancestors:
+        pos = {c: i for i, c in enumerate(ancestors)}
+        cand = [h for h in other if h.get("commit") in pos]
+        cand.sort(key=lambda h: h.get("measured_at") or "", reverse=True)  # newest measurement first...
+        cand.sort(key=lambda h: pos[h["commit"]])  # ...of the nearest ancestor (stable sort)
+        how = "nearest ancestor"
+    else:
+        t = res.get("commit_time") or "~"
+        cand = sorted((h for h in other if (h.get("commit_time") or "") <= t),
+                      key=lambda h: (h.get("commit_time") or "", h.get("measured_at") or ""), reverse=True)
+        how = "newest older commit, ancestry unavailable"
+    return cand, [h for h in cand if not mismatch(res, h)], how
 
 
-def compare(res, hist):
-    """{key: (ratio, ratio on main, change, threshold)} with ratio = slz's speed / the reference's speed"""
-    pool, same_cpu = baseline(res, hist)
+def compare(res, hist, ancestors=None):
+    """({key: (ratio, ratio on main, change, threshold)}, baseline run or None, note), with ratio =
+    slz's speed / the reference's speed. Without a compatible baseline nothing is compared and the
+    note says why."""
+    cand, pool, how = baseline(res, hist, ancestors)
     if not pool:
-        return {}, None, same_cpu
-    base, out = pool[-1], {}
+        if not cand:
+            return {}, None, "no earlier run on main"
+        near = cand[0]
+        return {}, None, (f"the nearest run on main (`{(near.get('commit') or '?')[:7]}`) differs in "
+                          + ", ".join(mismatch(res, near)) + ", and no earlier one has the same setup")
+    base, out = pool[0], {}
     for w in WORKLOADS:
         r, rb = speedup(w, values(res, w), w["ref"]), speedup(w, values(base, w), w["ref"])
         if not r or not rb:
             continue
         # noise threshold: 3 robust sigmas of the recent same-CPU ratios, at least 5%; 10% without them
-        recent = [x for x in (speedup(w, values(h, w), w["ref"]) for h in pool[-RECENT:]) if x]
+        recent = [x for x in (speedup(w, values(h, w), w["ref"]) for h in pool[:RECENT]) if x]
         thr = 0.10
-        if same_cpu and len(recent) >= 5:
+        if len(recent) >= 5:
             logs = [math.log(x) for x in recent]
             m = statistics.median(logs)
             thr = max(0.05, math.exp(3 * 1.4826 * statistics.median([abs(x - m) for x in logs])) - 1)
         out[w["key"]] = (r, rb, r / rb - 1, thr)
-    return out, base, same_cpu
+    return out, base, how
 
 
 # ---------------------------------------------------------------- SVG
@@ -436,8 +475,8 @@ def results_table(e):
     return out
 
 
-def summary(res, hist, result_dir=None):
-    cmp_, base, same_cpu = compare(res, hist)
+def summary(res, hist, result_dir=None, ancestors=None):
+    cmp_, base, note = compare(res, hist, ancestors)
     env, t = res.get("env") or {}, res.get("timing") or {}
     lines = [f"## slz benchmarks · `{(res.get('commit') or '?')[:7]}`", "",
              f"{md(res.get('subject'))} · `{res.get('ref', '')}` · {machine(env)} · {env.get('cc', '')} · "
@@ -445,13 +484,13 @@ def summary(res, hist, result_dir=None):
              f"archives {t.get('e2e', '-')} s", ""]
     flagged = [k for k, (_, _, ch, thr) in cmp_.items() if ch < -thr]
     if base is None:
-        lines += ["No run on main to compare with yet (bench-data branch).", ""]
+        lines += [f"⚪ Not compared with main: {note}.", ""]
     else:
-        where = "same CPU model" if same_cpu else f"**different CPU** ({cpu_name((base.get('env') or {}).get('cpu'))})"
         state = (f"⚠️ {len(flagged)} possible regression{'s' if len(flagged) > 1 else ''}" if flagged
                  else "✅ no change beyond the noise threshold")
-        lines += [f"{state} against main at `{(base.get('commit') or '?')[:7]}` ({where}).", ""]
-    lines += ["| workload | slz | standard tool, slz speed | fastest other, slz speed | vs last main run |",
+        lines += [f"{state} against main at `{(base.get('commit') or '?')[:7]}` ({note}, same setup: CPU model, "
+                  "threads, runner image, kernel, compiler, competitor versions, benchmark parameters).", ""]
+    lines += ["| workload | slz | standard tool, slz speed | fastest other, slz speed | vs main (same setup) |",
               "|---|---:|---|---|---|"]
     for w in WORKLOADS:
         v = values(res, w)
@@ -468,8 +507,9 @@ def summary(res, hist, result_dir=None):
         lines.append(f"| {w['name']} | **{fmt(w, v[w['rows'][0][0]])}** | {ratio_cell(w, v, w['ref'])} | "
                      f"{ratio_cell(w, v, fastest) if fastest else '-'} | {delta} |")
     lines += ["", "slz speed: how many times faster than that tool (below 1× slz is slower), both measured in this "
-              "job. The last column compares it with the last run on main; ⚠️ marks a drop beyond the noise "
-              "threshold (3 robust sigmas of recent main runs on this CPU model, at least 5%; 10% without them). "
+              "job. The last column compares it with the nearest earlier run on main with the same setup; ⚠️ "
+              "marks a drop beyond the noise threshold (3 robust sigmas of the recent runs with that setup, at "
+              "least 5%; 10% with fewer than 5 of them). "
               "Hosted runners are noisy: re-run the job before trusting a single warning.", "",
               "<details><summary>All numbers</summary>", ""] + results_table(res)
     vs = versions(res)
@@ -545,7 +585,12 @@ def dashboard(hist, latest):
 
 def stage(a):
     res = load_json(a.result)
-    text, flagged, cmp_ = summary(res, load_history(a.history), os.path.dirname(os.path.abspath(a.result)))
+    ancestors = None
+    if a.ancestors and os.path.exists(a.ancestors):
+        with open(a.ancestors, encoding="utf-8") as f:
+            ancestors = [l.strip() for l in f if l.strip()] or None
+    text, flagged, cmp_ = summary(res, load_history(a.history), os.path.dirname(os.path.abspath(a.result)),
+                                  ancestors)
     write(os.path.join(a.out, "summary.md"), text)
     for w, (r, rb, ch, thr), base in flagged:
         annotate("warning", f"Possible regression: {w['name']}",
@@ -585,6 +630,8 @@ def main():
     s.add_argument("result")
     s.add_argument("--out", required=True)
     s.add_argument("--history", help="history.json of the bench-data branch (runs on main)")
+    s.add_argument("--ancestors", help="first-parent ancestors of the measured commit, one SHA per line, nearest "
+                   "first (git rev-list --first-parent): the baseline is the nearest one with a run of the same setup")
     q = sub.add_parser("publish", help="history, banners, badges and dashboard")
     q.add_argument("result")
     q.add_argument("--site", required=True, help="bench-data checkout")

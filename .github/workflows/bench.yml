@@ -36,6 +36,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # the report compares with the nearest ancestor's run, so it needs the history
 
       - name: Restore competitors
         id: deps
@@ -84,12 +85,16 @@ jobs:
       - name: Compare with main and render
         run: |
           out=$RUNNER_TEMP/bench/out
+          # first-parent ancestry, nearest first (a pull request's merge commit: its base branch first);
+          # listed before the shallow fetch of bench-data below
+          git rev-list --first-parent --max-count=2000 HEAD > "$RUNNER_TEMP/ancestors.txt"
           if git fetch -q --depth=1 --no-tags origin +refs/heads/bench-data:refs/remotes/origin/bench-data; then
             git show origin/bench-data:history.json > "$RUNNER_TEMP/history.json" || rm -f "$RUNNER_TEMP/history.json"
           else
             echo "No bench-data branch yet: nothing to compare with."
           fi
-          python3 .github/bench/report.py stage "$out/result.json" --out "$out" --history "$RUNNER_TEMP/history.json"
+          python3 .github/bench/report.py stage "$out/result.json" --out "$out" --history "$RUNNER_TEMP/history.json" \
+            --ancestors "$RUNNER_TEMP/ancestors.txt"
           cat "$out/summary.md" >> "$GITHUB_STEP_SUMMARY"
           # the publishing path without the push: the artifact gets the banners of this run
           bash .github/bench/publish.sh "$out/result.json" "$RUNNER_TEMP/bench/site" --dry-run
