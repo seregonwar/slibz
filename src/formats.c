@@ -787,6 +787,7 @@ slz_archive *slz_open(const char *path, int *err) {
             a->n = 0;
         }
     }
+    a->path[L] = 0; /* open_gz names a member without FNAME after the archive path */
     if (!a->partial || reparse) {
         if ((hn = os_pread(a->fd, head, sizeof head, 0)) < 0) {
             r = (int)hn;
@@ -810,7 +811,6 @@ slz_archive *slz_open(const char *path, int *err) {
             }
         }
     }
-    a->path[L] = 0;
     if (r) goto fail;
     finish_index(a);
     if (a->partial && a->fp != snap_fp) { /* the journal belongs to another file */
