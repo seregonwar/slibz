@@ -230,7 +230,7 @@ disasm() { # cc flags...: disassembly of the first variant's hot loops (to compa
     shift
     local o n f syn=
     o=$(objdir "$cc" "$*")
-    n=$(sed -n 1p v/order)
+    n=${DIS_V:-$(sed -n 1p v/order)}
     [ "$(uname -m)" = x86_64 ] && syn="-M intel"
     for f in codes_bmi2 codes_generic; do # the BMI2 build when there is one
         nm "$o/$n.o" | grep -qw "$f" || continue

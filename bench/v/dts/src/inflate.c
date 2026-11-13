@@ -9,9 +9,6 @@
  * Acceptance rules match zlib exactly (verified by tests/fuzz_inflate.c); every table, window
  * and buffer access is bounded by construction. */
 #include "internal.h"
-#if defined(__BMI2__) && defined(__x86_64__)
-#include <immintrin.h>
-#endif
 
 /* x86-64 GCC/Clang: the hot loop is also compiled for BMI2 (shrx/bzhi for the variable shifts
  * and masks) and picked at run time */
@@ -367,17 +364,17 @@ INF_INLINE int codes(inf *s) {
     size_t op = s->op, d;
     uint32_t e;
     int r;
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__aarch64__)
     const uint32_t *dt = s->dt;
+#else
+#define dt s->dt
+#endif
 #define SAVE()     (s->bb = bb, s->bn = bn, s->p = p, s->op = op)
 #define LOAD()     (bb = s->bb, bn = s->bn, p = s->p, pe = s->e, op = s->op)
 #define CONSUME(x) (bb >>= (x) & 63, bn -= (x)) /* fast loop: only (u8)bn is valid */
 #define REFILL()   (bb |= ld64(p) << (bn & 63), p += 7 - (bn >> 3 & 7), bn |= 56)
 #define CONSUMEX(x) (bb >>= (x) & 63, bn -= (x) & 63)
-#if defined(__BMI2__) && defined(__x86_64__)
-#define EXTRA(x)   ((unsigned)(_bzhi_u64(sv, (x)) >> ((x) >> 8 & 63)))
-#else
 #define EXTRA(x)   ((unsigned)((sv & ((1ull << (uint8_t)(x)) - 1)) >> ((x) >> 8 & 63)))
-#endif
 #if (defined(__GNUC__) || defined(__clang__)) && defined(__aarch64__)
     /* opaque copy: keeps the distance table base in a register (its offset from s is beyond
      * the arm64 load immediate range, so it would otherwise be added on every lookup) */
@@ -521,6 +518,7 @@ INF_INLINE int codes(inf *s) {
 #undef CONSUMEX
 #undef REFILL
 #undef EXTRA
+#undef dt
 }
 
 static INF_NOINLINE int codes_generic(inf *s) {
