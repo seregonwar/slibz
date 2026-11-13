@@ -131,8 +131,8 @@ int os_cas(volatile int64_t *p, int64_t expect, int64_t v); /* atomic compare-an
 
 #define WIN     32768u                         /* DEFLATE window */
 #define IBUF    (1u << 20)                     /* input buffer */
-#define OBUF    (WIN + (4u << 20))             /* output buffer: window history + 4 MiB of new output */
-#define LT_BITS 12 /* primary table bits, literal/length code */
+#define OBUF    (WIN + (1u << 20))             /* output buffer: window history + 4 MiB of new output */
+#define LT_BITS 11 /* primary table bits, literal/length code */
 #define DT_BITS 8  /* primary table bits, distance code (also holds the 7-bit code-length code) */
 /* primary + subtables: one subtable of 2^(15 - bits) entries at most per code longer than bits */
 #define LT_SIZE ((1u << LT_BITS) + 288u * (1u << (15 - LT_BITS)))

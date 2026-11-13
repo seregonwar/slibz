@@ -217,9 +217,37 @@ profile() { # cpu-clock sampling of the variants in $PROF (default: the first) a
             true)
         [ -n "$sym" ] || continue
         echo "== perf annotate $cc $flags: $m $sym (instructions >= 0.1% of samples)"
-        "$perf" annotate -i "$o/prof/$m.data" --stdio --no-source "$sym" 2> /dev/null |
-            awk '$1 + 0 >= 0.1' | sed -n '1,220p' || true
+        "$perf" annotate -i "$o/prof/$m.data" --stdio --no-source -s "$sym" > "$o/prof/$m.ann" 2> "$o/prof/$m.err" ||
+            true
+        echo "annotate: $(wc -l < "$o/prof/$m.ann") lines; stderr: $(head -c 400 "$o/prof/$m.err" | tr '\n' ' ')"
+        sed -n '1,4p' "$o/prof/$m.ann"
+        awk '{ x = $1; sub(/%$/, "", x) } x ~ /^[0-9.]+$/ && x + 0 >= 0.1' "$o/prof/$m.ann" | sed -n '1,260p' || true
     done
+}
+
+disasm() { # cc flags...: disassembly of the first variant's hot loops (to compare compilers)
+    local cc=$1
+    shift
+    local o n f syn=
+    o=$(objdir "$cc" "$*")
+    n=$(sed -n 1p v/order)
+    [ "$(uname -m)" = x86_64 ] && syn="-M intel"
+    for f in codes_bmi2 codes_generic; do # the BMI2 build when there is one
+        nm "$o/$n.o" | grep -qw "$f" || continue
+        echo "== disasm $cc $*: $n $f"
+        # shellcheck disable=SC2086
+        objdump -d --no-show-raw-insn $syn --disassemble="$f" "$o/$n.o" | sed -n '7,$p' | cut -c1-90 || true
+        break
+    done
+    if [ -n "${DIS_LD:-}" ]; then # libdeflate's biggest decompress function, same compiler
+        local t=$o/ldobj s a=$PWD/deps/$cc/lib/libdeflate.a
+        rm -rf "$t" && mkdir -p "$t"
+        (cd "$t" && ar x "$a") || true
+        s=$(nm -S --size-sort "$t"/deflate_decompress*.o | awk '$3 ~ /[tT]/ && $4 ~ /decompress/ { s = $4 } END { print s }' || true)
+        echo "== disasm $cc $*: libdeflate $s"
+        # shellcheck disable=SC2086
+        objdump -d --no-show-raw-insn $syn --disassemble="$s" "$t"/deflate_decompress*.o | sed -n '7,$p' | cut -c1-90 || true
+    fi
 }
 
 fuzz() {
@@ -268,7 +296,7 @@ fuzz() {
 cmd=${1:-}
 [ $# -gt 0 ] && shift
 case "$cmd" in
-    info | corpus | deps | variants | bench | profile | harness | fuzz) "$cmd" "$@" ;;
+    info | corpus | deps | variants | bench | profile | disasm | harness | fuzz) "$cmd" "$@" ;;
     *)
         sed -n '2,11p' "$0"
         exit 2
