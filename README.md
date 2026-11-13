@@ -202,8 +202,9 @@ macOS arm64, Windows (MSVC, clang-cl), FreeBSD 14 and WASI.
 
 Every push that changes code is benchmarked by [`.github/workflows/bench.yml`](.github/workflows/bench.yml)
 on a GitHub-hosted `ubuntu-24.04` runner, with slz and its competitors in the same job. zlib, zlib-ng,
-libdeflate, xz (liblzma), libarchive (bsdtar) and pigz are built from pinned, checksummed sources, and
-7-Zip (`7zz`) is its official build ([`.github/bench/deps.sh`](.github/bench/deps.sh)); unzip, GNU tar
+libdeflate, xz (liblzma), libarchive (bsdtar) and pigz are built from pinned, checksummed sources, with
+bsdtar and pigz linked to that zlib-ng (its zlib-compatible build) rather than to a distribution's zlib,
+and 7-Zip (`7zz`) is its official build ([`.github/bench/deps.sh`](.github/bench/deps.sh)); unzip, GNU tar
 and Python are the runner's. The banner at the top is redrawn from the newest run on `main` and prints
 its date, commit, CPU and versions; the chart below follows the decoders over the last runs on `main`.
 
