@@ -9,9 +9,34 @@ Builds datasets in <workdir> (Silesia corpus from /opt/corpora, a many-small-fil
 a warm page cache. Prints Markdown tables (copied into docs/benchmarks.md). --sets picks the datasets,
 --json also writes the times in seconds (used by .github/workflows/bench.yml), and $SLZ_CORPUS
 moves the Silesia directory (silesia.zip, unpacked into files/)."""
-import json, os, shutil, subprocess, sys, time, zipfile
+import argparse, json, os, shutil, subprocess, sys, time, zipfile
 
-SLZ, WORK = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
+SET_NAMES = ("silesia", "small", "500k")
+
+
+def sets_arg(s):
+    names = [n for n in s.split(",") if n]
+    bad = [n for n in names if n not in SET_NAMES]
+    if bad or not names:
+        raise argparse.ArgumentTypeError(f"unknown dataset {','.join(bad) or repr(s)} (choose from {','.join(SET_NAMES)})")
+    return names
+
+
+def runs_arg(s):
+    n = int(s)
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return n
+
+
+ap = argparse.ArgumentParser(description="End-to-end listing and extraction benchmark (see the module docstring).")
+ap.add_argument("slz", help="slz binary")
+ap.add_argument("workdir", help="directory for the datasets and the extraction output")
+ap.add_argument("--runs", type=runs_arg, default=3, help="runs per command, best is kept (default 3)")
+ap.add_argument("--sets", type=sets_arg, default=list(SET_NAMES), help="comma-separated datasets (default silesia,small,500k)")
+ap.add_argument("--json", help="also write the times in seconds to this file")
+ARGS = ap.parse_args()
+SLZ, WORK = os.path.abspath(ARGS.slz), os.path.abspath(ARGS.workdir)
 # competitor binaries: override with SZ_BIN, BSDTAR_BIN, UNZIP_BIN, TAR_BIN, PIGZ_BIN, PY_BIN
 # (not PIGZ / GZIP: those variables are read by the tools themselves as default options)
 SZ = os.environ.get("SZ_BIN", shutil.which("7zz") or shutil.which("7z") or "7z")
@@ -20,10 +45,9 @@ UNZIP = os.environ.get("UNZIP_BIN", "unzip")
 TAR = os.environ.get("TAR_BIN", "tar")
 PIGZ = os.environ.get("PIGZ_BIN", "pigz")
 PY = os.environ.get("PY_BIN", sys.executable)
-RUNS = int(sys.argv[sys.argv.index("--runs") + 1]) if "--runs" in sys.argv else 3
-SETS = sys.argv[sys.argv.index("--sets") + 1].split(",") if "--sets" in sys.argv else ["silesia", "small", "500k"]
-JSON = sys.argv[sys.argv.index("--json") + 1] if "--json" in sys.argv else None
+RUNS, SETS, JSON = ARGS.runs, ARGS.sets, ARGS.json
 RES = {"runs": RUNS, "threads": os.cpu_count(), "versions": {}}
+TREE = {}  # dataset -> (regular files, bytes) of its source tree
 os.makedirs(WORK, exist_ok=True)
 
 
@@ -50,7 +74,19 @@ def version(cmd):
         return "?"
 
 
-def best(cmd, out=None, ok=(0,)):
+def tree(d):  # (regular files, bytes) under d; symlinks are not counted
+    n = size = 0
+    for r, _, fs in os.walk(d):
+        for f in fs:
+            p = os.path.join(r, f)
+            if not os.path.islink(p):
+                n, size = n + 1, size + os.path.getsize(p)
+    return n, size
+
+
+def best(cmd, out=None, ok=(0,), expect=None):
+    """Best time of RUNS. expect=(files, bytes): when a warning exit code is accepted, the output
+    tree is checked against it after each timed run, so an incomplete extraction is an error."""
     t = []
     for _ in range(RUNS):
         if out:
@@ -64,6 +100,8 @@ def best(cmd, out=None, ok=(0,)):
             t0 = time.perf_counter()
             sh(cmd, ok=ok)
         t.append(time.perf_counter() - t0)
+        if expect and tree(out) != expect:
+            raise RuntimeError(f"incomplete extraction: {cmd}: {tree(out)} (files, bytes), expected {expect}")
     if out:
         shutil.rmtree(out, ignore_errors=True)
     return min(t)
@@ -95,8 +133,8 @@ def dataset():
         if have(SZ) and not os.path.exists(szn):
             sh(f"cd {src} && {SZ} a -bd -y -ms=off {szn} .", ok=(0, 1))
         files = sum(len(f) for _, _, f in os.walk(src))
-        size = sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(src) for f in fs if not os.path.islink(os.path.join(d, f)))
-        sets[name] = (z, tgz, files, size)
+        TREE[name] = tree(src)
+        sets[name] = (z, tgz, files, TREE[name][1])
     big = os.path.join(WORK, "entries500k.zip")
     if "500k" in SETS and not os.path.exists(big):
         with zipfile.ZipFile(big, "w", zipfile.ZIP_STORED) as zf:
@@ -135,7 +173,7 @@ def main():
         z, _, files, size = sets[name]
         row = [best(f"{SLZ} x {z} {out} -q", out), best(f"{SLZ} x {z} {out} -q -j 1", out), best(f"{UNZIP} -q {z} -d {out}", out),
                best(f"mkdir -p {out} && {BSDTAR} -xf {z} -C {out}", out) if have(BSDTAR) else None,
-               best(f"{SZ} x -y -o{out} {z}", out, ok=(0, 1, 2)) if have(SZ) else None,
+               best(f"{SZ} x -y -o{out} {z}", out, ok=(0, 1), expect=TREE[name]) if have(SZ) else None,  # 1 = warnings, 2 = fatal
                best(f"{PY} -c \"import zipfile;zipfile.ZipFile('{z}').extractall('{out}')\"", out)]
         rec("zip", f"{name}.zip", ("slz", "slz -j 1", "unzip", "bsdtar", "7z x", "python zipfile"), row)
         print(f"| {name}.zip | {files} / {size / 1e6:.0f} | " + " | ".join("-" if v is None else f"{v:.2f}" for v in row) + " |")
@@ -156,12 +194,13 @@ def main():
         print("| archive | slz list | 7z l | slz x | slz x -j 1 | 7z x | bsdtar -x |")
         print("|---|---|---|---|---|---|---|")
         for label in ("silesia.7z", "silesia-nonsolid.7z", "small.7z", "small-nonsolid.7z"):
-            if label.split(".")[0].split("-")[0] not in sets:
+            name = label.split(".")[0].split("-")[0]
+            if name not in sets:
                 continue
             a = os.path.join(WORK, label)
             row = [best(f"{SLZ} l {a}") * 1e3, best(f"{SZ} l {a}") * 1e3, best(f"{SLZ} x {a} {out} -q", out),
-                   best(f"{SLZ} x {a} {out} -q -j 1", out), best(f"{SZ} x -y -o{out} {a}", out, ok=(0, 1, 2)),
-                   best(f"mkdir -p {out} && {BSDTAR} -xf {a} -C {out}", out, ok=(0, 1)) if have(BSDTAR) else None]
+                   best(f"{SLZ} x {a} {out} -q -j 1", out), best(f"{SZ} x -y -o{out} {a}", out, ok=(0, 1), expect=TREE[name]),
+                   best(f"mkdir -p {out} && {BSDTAR} -xf {a} -C {out}", out, ok=(0, 1), expect=TREE[name]) if have(BSDTAR) else None]
             rec("7z", label, ("slz list", "7z l", "slz x", "slz x -j 1", "7z x", "bsdtar -x"),
                 [v / 1e3 if i < 2 else v for i, v in enumerate(row)])
             print(f"| {label} | " + " | ".join("-" if v is None else (f"{v:.0f}" if i < 2 else f"{v:.2f}")
