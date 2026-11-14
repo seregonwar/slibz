@@ -52,6 +52,19 @@
 #define z7_decode       slz_i_z7_decode
 #define z7_supported    slz_i_z7_supported
 #define z7_free         slz_i_z7_free
+#define open_slz        slz_i_open_slz
+#define nat_decode      slz_i_nat_decode
+#define nat_free        slz_i_nat_free
+#define nat_zfree       slz_i_nat_zfree
+#define nat_first       slz_i_nat_first
+#define nat_block_of    slz_i_nat_block_of
+#define xxh64           slz_i_xxh64
+#define xxh64_init      slz_i_xxh64_init
+#define xxh64_update    slz_i_xxh64_update
+#define xxh64_digest    slz_i_xxh64_digest
+#define lz4_bound       slz_i_lz4_bound
+#define lz4_compress    slz_i_lz4_compress
+#define lz4_decompress  slz_i_lz4_decompress
 
 /* MIN evaluates its arguments twice: never pass expressions with side effects. */
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
