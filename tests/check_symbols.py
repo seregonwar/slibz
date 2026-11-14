@@ -20,6 +20,9 @@ for line in out.splitlines():
 if names and all(n.startswith("_") for n in names):  # Mach-O
     names = {n[1:] for n in names}
 names -= {"_init", "_fini", "_edata", "_end", "__bss_start"}  # ELF shared objects: defined by the linker
+# identifiers reserved to the implementation (C11 7.1.3: "__..." or "_" + uppercase) come from the
+# compiler, sanitizers or the linker (e.g. clang ASan's ___asan_globals_registered), never from slz
+names = {n for n in names if not (n.startswith("__") or (len(n) > 1 and n[0] == "_" and n[1].isupper()))}
 bad = sorted(n for n in names if not n.startswith("slz_"))
 if not names:
     sys.exit(f"{lib}: no global symbols found (wrong nm output format?)")
