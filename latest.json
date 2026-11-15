@@ -1,6 +1,6 @@
 {
- "commit": "945073798aa98c0aa916a6dcf29bbbc771fea775",
- "commit_time": "2026-11-13T21:10:58Z",
+ "commit": "85751c4992ca9b12db5f755ffe40b9c0212d116f",
+ "commit_time": "2026-11-15T00:47:47Z",
  "decode": {
   "best_of": {
    "deflate": "5 per process, 3 processes",
@@ -9,41 +9,41 @@
   "bytes": 211938580,
   "corpus": "Silesia",
   "deflate": {
-   "libdeflate": 927.0,
-   "slz": 811.0,
-   "zlib": 398.0,
-   "zlib-ng": 702.0
+   "libdeflate": 1103.0,
+   "slz": 965.0,
+   "zlib": 462.0,
+   "zlib-ng": 796.0
   },
   "files": 12,
   "lzma2": {
-   "slz": 125.0,
-   "xz": 130.0
+   "slz": 142.0,
+   "xz": 149.0
   },
   "rounds": {
    "deflate": [
     {
-     "libdeflate": 927.0,
-     "slz": 808.0,
-     "zlib": 398.0,
-     "zlib-ng": 702.0
+     "libdeflate": 1103.0,
+     "slz": 965.0,
+     "zlib": 461.0,
+     "zlib-ng": 796.0
     },
     {
-     "libdeflate": 927.0,
-     "slz": 811.0,
-     "zlib": 398.0,
-     "zlib-ng": 702.0
+     "libdeflate": 1101.0,
+     "slz": 952.0,
+     "zlib": 462.0,
+     "zlib-ng": 796.0
     },
     {
-     "libdeflate": 927.0,
-     "slz": 804.0,
-     "zlib": 398.0,
-     "zlib-ng": 701.0
+     "libdeflate": 1101.0,
+     "slz": 953.0,
+     "zlib": 461.0,
+     "zlib-ng": 796.0
     }
    ],
    "lzma2": [
     {
-     "slz": 125.0,
-     "xz": 130.0
+     "slz": 142.0,
+     "xz": 149.0
     }
    ]
   }
@@ -51,83 +51,83 @@
  "e2e": {
   "7z": {
    "silesia-nonsolid.7z": {
-    "7z l": 0.002758,
-    "7z x": 1.7918,
-    "bsdtar -x": 1.834809,
-    "slz list": 0.001376,
-    "slz x": 0.824561,
-    "slz x -j 1": 1.877926
+    "7z l": 0.002335,
+    "7z x": 1.653274,
+    "bsdtar -x": 1.643068,
+    "slz list": 0.001187,
+    "slz x": 0.689563,
+    "slz x -j 1": 1.659759
    },
    "silesia.7z": {
-    "7z l": 0.002725,
-    "7z x": 1.20569,
-    "bsdtar -x": 1.817267,
-    "slz list": 0.001368,
-    "slz x": 1.218048,
-    "slz x -j 1": 1.786759
+    "7z l": 0.00236,
+    "7z x": 1.072858,
+    "bsdtar -x": 1.571625,
+    "slz list": 0.001189,
+    "slz x": 1.068007,
+    "slz x -j 1": 1.5759
    }
   },
   "list": {
    "500k entries": {
-    "7z l": 4.66222,
-    "bsdtar -t": 3.099929,
-    "python zipfile": 2.273091,
-    "slz": 0.117332,
-    "unzip -Z1": 0.664468
+    "7z l": 4.049738,
+    "bsdtar -t": 2.818772,
+    "python zipfile": 1.984293,
+    "slz": 0.097402,
+    "unzip -Z1": 0.819944
    },
    "silesia.zip": {
-    "7z l": 0.002763,
-    "bsdtar -t": 0.001784,
-    "python zipfile": 0.030155,
-    "slz": 0.001354,
-    "unzip -Z1": 0.001951
+    "7z l": 0.002456,
+    "bsdtar -t": 0.001536,
+    "python zipfile": 0.026306,
+    "slz": 0.001168,
+    "unzip -Z1": 0.001682
    }
   },
   "runs": 3,
   "targz": {
    "silesia.tar.gz": {
-    "GNU tar -xzf": 1.243278,
-    "bsdtar": 0.434552,
-    "pigz -d | tar -x": 0.580427,
-    "slz": 0.322077
+    "GNU tar -xzf": 1.072712,
+    "bsdtar": 0.379241,
+    "pigz -d | tar -x": 0.422444,
+    "slz": 0.270413
    }
   },
   "threads": 4,
   "zip": {
    "silesia.zip": {
-    "7z x": 0.975376,
-    "bsdtar": 0.404144,
-    "python zipfile": 0.815466,
-    "slz": 0.115991,
-    "slz -j 1": 0.316128,
-    "unzip": 1.325117
+    "7z x": 0.819407,
+    "bsdtar": 0.345405,
+    "python zipfile": 0.697636,
+    "slz": 0.096471,
+    "slz -j 1": 0.262725,
+    "unzip": 1.148594
    }
   }
  },
  "env": {
   "cc": "gcc 13.3.0",
-  "cpu": "AMD EPYC 7763 64-Core Processor",
+  "cpu": "AMD EPYC 9V74 80-Core Processor",
   "image": "ubuntu24 20261111.370.1",
   "kernel": "7.0.0-1017-azure",
   "os": "Ubuntu 24.04.5 LTS",
   "runner": "GitHub Actions",
   "threads": 4
  },
- "event": "workflow_dispatch",
- "measured_at": "2026-11-13T21:20:25Z",
+ "event": "push",
+ "measured_at": "2026-11-15T00:51:39Z",
  "ref": "refs/heads/main",
  "repository": "seregonwar/slibz",
  "run_attempt": "1",
- "run_id": "43509191625",
- "run_url": "https://github.com/seregonwar/slibz/actions/runs/43509191625",
+ "run_id": "43659958867",
+ "run_url": "https://github.com/seregonwar/slibz/actions/runs/43659958867",
  "schema": 1,
- "subject": "bench: compare only with the nearest ancestor's run on the same setup",
+ "subject": "tests: symbols check ignores reserved identifiers (clang ASan's ___asan_globals_registered)",
  "timing": {
-  "build": 4.4,
-  "deflate": 44.3,
-  "e2e": 90.6,
-  "lzma2": 87.3,
-  "total": 228.0
+  "build": 4.0,
+  "deflate": 38.7,
+  "e2e": 80.1,
+  "lzma2": 92.8,
+  "total": 216.7
  },
  "versions": {
   "7-Zip": "7-Zip (z) 26.06 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-11-06",
